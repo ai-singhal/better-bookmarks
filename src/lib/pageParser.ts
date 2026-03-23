@@ -25,7 +25,6 @@ export async function parsePage(url: string): Promise<ParsedPage | null> {
       signal: controller.signal,
       headers: {
         'Accept': 'text/html',
-        'User-Agent': 'Mozilla/5.0 (compatible; BookmarkManager/1.0)',
       },
     })
     clearTimeout(timeout)
@@ -112,7 +111,12 @@ function extractMainText(doc: Document): string {
       paragraphs.push(text)
     }
   })
-  return paragraphs.join(' ').slice(0, MAX_TEXT_LENGTH)
+
+  if (paragraphs.length > 0) {
+    return paragraphs.join(' ').slice(0, MAX_TEXT_LENGTH)
+  }
+
+  return cleanText(doc.body?.textContent || '').slice(0, MAX_TEXT_LENGTH)
 }
 
 function extractKeywords(doc: Document): string[] {

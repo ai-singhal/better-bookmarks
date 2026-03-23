@@ -1,40 +1,24 @@
-import { useState, useEffect } from 'react'
-
-interface Reminder {
-  bookmarkId: string
-  title: string
-  url: string
-  note: string
-  remindAt: string
-}
+import { useEffect, useState } from 'react'
+import type { BookmarkReminderRecord } from '../../shared/types'
+import {
+  cancelReminder,
+  getAllReminders,
+  snoozeReminder,
+} from '../../lib/reminderService'
 
 export function Reminders() {
-  const [reminders, setReminders] = useState<Reminder[]>([])
+  const [reminders, setReminders] = useState<BookmarkReminderRecord[]>([])
   const [loading, setLoading] = useState(true)
+  const [workingBookmarkId, setWorkingBookmarkId] = useState<string | null>(null)
 
   useEffect(() => {
-    loadReminders()
+    void loadReminders()
   }, [])
 
   async function loadReminders() {
     setLoading(true)
     try {
-      // Load all reminder_ keys from storage
-      const all = await chrome.storage.local.get(null)
-      const reminderList: Reminder[] = []
-
-      for (const [key, value] of Object.entries(all)) {
-        if (key.startsWith('reminder_') && value) {
-          const r = value as Reminder
-          reminderList.push(r)
-        }
-      }
-
-      reminderList.sort(
-        (a, b) =>
-          new Date(a.remindAt).getTime() - new Date(b.remindAt).getTime()
-      )
-      setReminders(reminderList)
+      setReminders(await getAllReminders())
     } catch (err) {
       console.error('Failed to load reminders:', err)
     } finally {
@@ -42,30 +26,48 @@ export function Reminders() {
     }
   }
 
+  async function handleSnooze(bookmarkId: string) {
+    setWorkingBookmarkId(bookmarkId)
+    try {
+      await snoozeReminder(bookmarkId, 60)
+      await loadReminders()
+    } finally {
+      setWorkingBookmarkId(null)
+    }
+  }
+
+  async function handleClear(reminder: BookmarkReminderRecord) {
+    setWorkingBookmarkId(reminder.bookmarkId)
+    try {
+      await cancelReminder(reminder.bookmarkId, reminder.url)
+      await loadReminders()
+    } finally {
+      setWorkingBookmarkId(null)
+    }
+  }
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+      <div className="flex h-full items-center justify-center">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
       </div>
     )
   }
 
   return (
     <div className="h-full flex flex-col">
-      {/* Header */}
-      <div className="px-6 py-5 border-b border-gray-800">
+      <div className="border-b border-gray-800 px-6 py-5">
         <h2 className="text-lg font-semibold">Reminders</h2>
-        <p className="text-sm text-gray-500 mt-0.5">
-          Bookmarks you want to look at later
+        <p className="mt-0.5 text-sm text-gray-500">
+          Scheduled bookmark follow-ups, including recurring reminders.
         </p>
       </div>
 
-      {/* Content */}
       <div className="flex-1 overflow-y-auto px-6 py-4">
         {reminders.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center">
+          <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-dashed border-gray-800 bg-gray-900/40 text-center">
             <svg
-              className="w-16 h-16 text-gray-700 mb-4"
+              className="mb-4 h-16 w-16 text-gray-700"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -77,42 +79,77 @@ export function Reminders() {
                 d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
               />
             </svg>
-            <p className="text-gray-500 text-sm">No reminders set</p>
-            <p className="text-gray-600 text-xs mt-1">
-              Set reminders on bookmarks to be notified when to check them
+            <p className="text-sm text-gray-500">No reminders set</p>
+            <p className="mt-1 text-xs text-gray-600">
+              Add reminders from AI Search to follow up on important bookmarks.
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
-            {reminders.map((reminder) => (
-              <div
-                key={reminder.bookmarkId}
-                className="flex items-center gap-3 p-4 rounded-lg bg-gray-900/50 border border-gray-800"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-gray-200">
-                    {reminder.title}
-                  </p>
-                  {reminder.note && (
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      {reminder.note}
-                    </p>
-                  )}
-                  <p className="text-xs text-indigo-400 mt-1">
-                    {new Date(reminder.remindAt).toLocaleString()}
-                  </p>
-                </div>
-                <button
-                  onClick={() => {
-                    if (reminder.url)
-                      chrome.tabs.create({ url: reminder.url })
-                  }}
-                  className="px-3 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-md transition-colors"
+          <div className="space-y-3">
+            {reminders.map((reminder) => {
+              const isWorking = workingBookmarkId === reminder.bookmarkId
+              const isOverdue = new Date(reminder.remindAt).getTime() < Date.now()
+
+              return (
+                <div
+                  key={reminder.bookmarkId}
+                  className="rounded-2xl border border-gray-800 bg-gray-900/55 p-4"
                 >
-                  Open
-                </button>
-              </div>
-            ))}
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-100">
+                        {reminder.title}
+                      </p>
+                      <p className="mt-1 text-xs text-gray-500">{reminder.url}</p>
+                      {reminder.note && (
+                        <p className="mt-3 text-sm text-gray-300">{reminder.note}</p>
+                      )}
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                        <span
+                          className={`rounded-full px-2.5 py-1 ${
+                            isOverdue
+                              ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
+                              : 'bg-indigo-500/10 text-indigo-300 border border-indigo-500/20'
+                          }`}
+                        >
+                          {isOverdue ? 'Due now' : new Date(reminder.remindAt).toLocaleString()}
+                        </span>
+                        {reminder.recurring && (
+                          <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 capitalize text-emerald-300">
+                            {reminder.recurring}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => {
+                          if (reminder.url) chrome.tabs.create({ url: reminder.url })
+                        }}
+                        className="rounded-lg bg-gray-800 px-3 py-1.5 text-xs text-gray-200 transition-colors hover:bg-gray-700"
+                      >
+                        Open
+                      </button>
+                      <button
+                        onClick={() => void handleSnooze(reminder.bookmarkId)}
+                        disabled={isWorking}
+                        className="rounded-lg border border-gray-700 px-3 py-1.5 text-xs text-gray-300 transition-colors hover:border-indigo-500 hover:text-white disabled:border-gray-800 disabled:text-gray-600"
+                      >
+                        {isWorking ? 'Working...' : 'Snooze 1h'}
+                      </button>
+                      <button
+                        onClick={() => void handleClear(reminder)}
+                        disabled={isWorking}
+                        className="rounded-lg border border-red-900/40 px-3 py-1.5 text-xs text-red-300 transition-colors hover:bg-red-900/20 disabled:border-gray-800 disabled:text-gray-600"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>

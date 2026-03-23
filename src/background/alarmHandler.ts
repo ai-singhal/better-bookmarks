@@ -1,6 +1,11 @@
 import { ALARM_NAMES } from '../shared/constants'
 import type { BookmarkReminderRecord } from '../shared/types'
-import { cancelReminder, createReminder, getReminder } from '../lib/reminderService'
+import {
+  cancelReminder,
+  createReminder,
+  getReminder,
+  snoozeReminder,
+} from '../lib/reminderService'
 
 export function setupAlarmHandler() {
   chrome.alarms.onAlarm.addListener((alarm) => {
@@ -89,9 +94,7 @@ chrome.notifications.onButtonClicked.addListener(
       }
     } else if (buttonIndex === 1) {
       // Snooze 1 hour
-      chrome.alarms.create(`${ALARM_NAMES.REMINDER_PREFIX}${bookmarkId}`, {
-        delayInMinutes: 60,
-      })
+      await snoozeReminder(bookmarkId, 60)
     }
 
     chrome.notifications.clear(notificationId)

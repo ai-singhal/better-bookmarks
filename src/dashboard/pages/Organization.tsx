@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import type { BookmarkWithMetadata } from '../../shared/types'
-import { getBookmarkTree } from '../../shared/chromeApi'
+import { flattenBookmarks, getBookmarkTree } from '../../shared/chromeApi'
 import { cn, getDomain, getFaviconUrl } from '../../shared/utils'
+import { clusterBookmarks, ensureIndex, type BookmarkCluster } from '../../lib/localSearchEngine'
 import { FolderPicker } from '../components/FolderPicker'
 
 interface LocalSuggestion {
@@ -25,6 +26,8 @@ interface FolderInfo {
 
 export function Organization() {
   const [suggestions, setSuggestions] = useState<LocalSuggestion[]>([])
+  const [clusters, setClusters] = useState<BookmarkCluster[]>([])
+  const [clusterBookmarkMap, setClusterBookmarkMap] = useState<Map<string, BookmarkWithMetadata>>(new Map())
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [hasAnalyzed, setHasAnalyzed] = useState(false)
   const [movingId, setMovingId] = useState<string | null>(null)
@@ -37,6 +40,11 @@ export function Organization() {
     setHasAnalyzed(true)
     try {
       const tree = await getBookmarkTree()
+      const flatBookmarks = flattenBookmarks(tree)
+      setClusterBookmarkMap(new Map(flatBookmarks.map((bookmark) => [bookmark.id, bookmark])))
+      await ensureIndex(flatBookmarks)
+      setClusters(clusterBookmarks().filter((cluster) => cluster.size > 1).slice(0, 12))
+
       const folderMap = new Map<string, FolderInfo>()
       const allBookmarks: Array<{ bookmark: BookmarkWithMetadata; folderId: string; folderPath: string }> = []
       const urlMap = new Map<string, { title: string; folders: string[] }>()
@@ -283,6 +291,10 @@ export function Organization() {
                   <p className="text-xs text-gray-500 mt-0.5">Misplaced</p>
                 </div>
                 <div className="flex-1 p-3 rounded-lg bg-gray-900/50 border border-gray-800 text-center">
+                  <p className="text-2xl font-semibold text-emerald-400">{clusters.length}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">AI Clusters</p>
+                </div>
+                <div className="flex-1 p-3 rounded-lg bg-gray-900/50 border border-gray-800 text-center">
                   <p className="text-2xl font-semibold text-amber-400">{duplicates.length}</p>
                   <p className="text-xs text-gray-500 mt-0.5">Duplicates</p>
                 </div>
@@ -291,6 +303,70 @@ export function Organization() {
                   <p className="text-xs text-gray-500 mt-0.5">Empty Folders</p>
                 </div>
               </div>
+            )}
+
+            {/* AI Clusters */}
+            {clusters.length > 0 && (
+              <section>
+                <h3 className="text-sm font-medium text-gray-300 mb-3">
+                  AI Topic Clusters
+                  <span className="text-xs text-gray-500 font-normal ml-2">
+                    ({clusters.length})
+                  </span>
+                </h3>
+                <div className="grid gap-3 xl:grid-cols-2">
+                  {clusters.map((cluster) => {
+                    const sampleBookmarks = cluster.bookmarkIds
+                      .map((bookmarkId) => clusterBookmarkMap.get(bookmarkId))
+                      .filter((bookmark): bookmark is BookmarkWithMetadata => Boolean(bookmark))
+                      .slice(0, 4)
+
+                    return (
+                      <div
+                        key={cluster.id}
+                        className="p-4 rounded-lg bg-gray-900/50 border border-gray-800"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium text-gray-200">{cluster.label}</p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              {cluster.size} related bookmarks inferred from page vectors
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap justify-end gap-1.5">
+                            {cluster.keywords.slice(0, 3).map((keyword) => (
+                              <span
+                                key={keyword}
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
+                              >
+                                {keyword}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="mt-3 space-y-1.5">
+                          {sampleBookmarks.map((bookmark) => (
+                            <div
+                              key={bookmark.id}
+                              className="flex items-center gap-2 text-xs text-gray-400"
+                            >
+                              <img
+                                src={bookmark.url ? getFaviconUrl(bookmark.url) : ''}
+                                alt=""
+                                className="w-3.5 h-3.5 rounded flex-shrink-0"
+                                onError={(e) => {
+                                  ;(e.target as HTMLImageElement).style.display = 'none'
+                                }}
+                              />
+                              <span className="truncate">{bookmark.title || bookmark.url}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </section>
             )}
 
             {/* Misplaced Bookmarks */}

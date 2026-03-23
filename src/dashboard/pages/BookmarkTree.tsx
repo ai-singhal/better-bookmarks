@@ -1,8 +1,19 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useBookmarkStore } from '../../shared/store'
 import { getBookmarkTree, countBookmarks } from '../../shared/chromeApi'
 import type { BookmarkWithMetadata } from '../../shared/types'
 import { BookmarkTreeNode } from '../components/BookmarkTreeNode'
+
+function countFolders(nodes: BookmarkWithMetadata[]): number {
+  let count = 0
+  for (const node of nodes) {
+    if (!node.url && node.children) {
+      count++
+      count += countFolders(node.children)
+    }
+  }
+  return count
+}
 
 export function BookmarkTree() {
   const bookmarkTree = useBookmarkStore((s) => s.bookmarkTree)
@@ -12,11 +23,7 @@ export function BookmarkTree() {
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
 
-  useEffect(() => {
-    loadBookmarks()
-  }, [])
-
-  async function loadBookmarks() {
+  const loadBookmarks = useCallback(async () => {
     setLoading(true)
     try {
       const tree = await getBookmarkTree()
@@ -29,33 +36,28 @@ export function BookmarkTree() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [setBookmarkTree])
 
-  function countFolders(nodes: BookmarkWithMetadata[]): number {
-    let count = 0
-    for (const node of nodes) {
-      if (!node.url && node.children) {
-        count++
-        count += countFolders(node.children)
-      }
-    }
-    return count
-  }
+  useEffect(() => {
+    void loadBookmarks()
+  }, [loadBookmarks])
 
   // Listen for bookmark changes
   useEffect(() => {
-    const handler = () => loadBookmarks()
-    chrome.runtime.onMessage.addListener((msg) => {
+    const listener = (msg: { type: string }) => {
       if (
         msg.type === 'BOOKMARK_CREATED' ||
         msg.type === 'BOOKMARK_REMOVED' ||
         msg.type === 'BOOKMARK_CHANGED' ||
         msg.type === 'BOOKMARK_MOVED'
       ) {
-        handler()
+        void loadBookmarks()
       }
-    })
-  }, [])
+    }
+
+    chrome.runtime.onMessage.addListener(listener)
+    return () => chrome.runtime.onMessage.removeListener(listener)
+  }, [loadBookmarks])
 
   if (loading) {
     return (

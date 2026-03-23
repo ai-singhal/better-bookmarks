@@ -4,6 +4,7 @@ import { setupAlarmHandler } from './alarmHandler'
 import { restoreAlarmsOnStartup } from '../lib/reminderService'
 
 // Initialize on service worker startup
+chrome.action.setBadgeText({ text: '' })
 setupBookmarkListeners()
 setupMessageRouter()
 setupAlarmHandler()

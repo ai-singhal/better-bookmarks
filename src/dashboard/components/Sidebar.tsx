@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useBookmarkStore } from '../../shared/store'
 import { resolveBookmarkFolders } from '../../shared/chromeApi'
 import { cn, truncateUrl, getFaviconUrl, formatRelativeDate } from '../../shared/utils'
@@ -76,7 +76,7 @@ export function Sidebar() {
   const [folderNames, setFolderNames] = useState<Map<string, string>>(new Map())
   const [recentCollapsed, setRecentCollapsed] = useState(true)
 
-  async function loadRecent() {
+  const loadRecent = useCallback(async () => {
     // Fetch a large batch and filter to past 30 days
     const recent = await chrome.bookmarks.getRecent(200)
     const cutoff = Date.now() - THIRTY_DAYS_MS
@@ -92,19 +92,24 @@ export function Sidebar() {
     setRecentBookmarks(bookmarks)
     const folders = await resolveBookmarkFolders(bookmarks)
     setFolderNames(folders)
-  }
+  }, [])
 
   useEffect(() => {
-    loadRecent()
+    const timer = window.setTimeout(() => {
+      void loadRecent()
+    }, 0)
 
     const listener = (msg: { type: string }) => {
       if (msg.type === 'BOOKMARK_CREATED' || msg.type === 'BOOKMARK_REMOVED') {
-        loadRecent()
+        void loadRecent()
       }
     }
     chrome.runtime.onMessage.addListener(listener)
-    return () => chrome.runtime.onMessage.removeListener(listener)
-  }, [])
+    return () => {
+      window.clearTimeout(timer)
+      chrome.runtime.onMessage.removeListener(listener)
+    }
+  }, [loadRecent])
 
   return (
     <aside className="w-60 border-r border-gray-800 flex flex-col bg-gray-950">
@@ -172,8 +177,16 @@ export function Sidebar() {
           </svg>
         </button>
 
-        {!recentCollapsed && (
-          <div className="flex-1 overflow-y-auto px-2 pb-2">
+        <div
+          className={cn(
+            'grid min-h-0 transition-[grid-template-rows,opacity] duration-300 ease-out',
+            recentCollapsed
+              ? 'grid-rows-[0fr] opacity-0 pointer-events-none'
+              : 'grid-rows-[1fr] opacity-100'
+          )}
+        >
+          <div className="min-h-0 overflow-hidden">
+            <div className="h-full overflow-y-auto px-2 pb-2">
             {recentBookmarks.length === 0 && (
               <p className="text-xs text-gray-600 px-2.5 py-3">
                 No bookmarks in the past 30 days
@@ -225,8 +238,9 @@ export function Sidebar() {
                 </button>
               )
             })}
+            </div>
           </div>
-        )}
+        </div>
       </div>
 
       {/* Footer */}

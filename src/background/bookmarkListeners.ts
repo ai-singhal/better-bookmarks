@@ -10,9 +10,6 @@ export function setupBookmarkListeners() {
       // No listeners — popup/dashboard not open
     })
 
-    // Update unprocessed count badge
-    updateBadge(1)
-
     // TODO: Phase 3 — trigger embedding generation
     // TODO: Phase 6 — show notification for new bookmark
   })
@@ -40,18 +37,4 @@ export function setupBookmarkListeners() {
       payload: { id, moveInfo },
     }).catch(() => {})
   })
-}
-
-async function updateBadge(delta: number) {
-  const result = await chrome.storage.local.get('unprocessedCount')
-  const unprocessedCount = (result.unprocessedCount as number) || 0
-  const newCount = Math.max(0, unprocessedCount + delta)
-  await chrome.storage.local.set({ unprocessedCount: newCount })
-
-  if (newCount > 0) {
-    chrome.action.setBadgeText({ text: String(newCount) })
-    chrome.action.setBadgeBackgroundColor({ color: '#6366f1' })
-  } else {
-    chrome.action.setBadgeText({ text: '' })
-  }
 }

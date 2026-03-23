@@ -4,6 +4,7 @@ import { RecentBookmarks } from './components/RecentBookmarks'
 import { QuickActions } from './components/QuickActions'
 import type { BookmarkWithMetadata } from '../shared/types'
 import { countBookmarks, resolveBookmarkFolders } from '../shared/chromeApi'
+import { loadIndex, search as semanticSearch } from '../lib/localSearchEngine'
 
 export function Popup() {
   const [bookmarkCount, setBookmarkCount] = useState(0)
@@ -11,8 +12,11 @@ export function Popup() {
   const [isSearching, setIsSearching] = useState(false)
   const [recentBookmarks, setRecentBookmarks] = useState<BookmarkWithMetadata[]>([])
   const [folderNames, setFolderNames] = useState<Map<string, string>>(new Map())
+  const [hasSemanticIndex, setHasSemanticIndex] = useState(false)
 
   useEffect(() => {
+    loadIndex().then(setHasSemanticIndex).catch(() => setHasSemanticIndex(false))
+
     chrome.bookmarks.getTree().then((tree) => {
       setBookmarkCount(countBookmarks(tree as BookmarkWithMetadata[]))
     })
@@ -43,14 +47,24 @@ export function Popup() {
 
     setIsSearching(true)
     try {
-      const results = await chrome.bookmarks.search(query)
-      const bookmarks = results.slice(0, 15).map((b) => ({
-        id: b.id,
-        parentId: b.parentId,
-        title: b.title,
-        url: b.url,
-        dateAdded: b.dateAdded,
-      }))
+      let bookmarks: BookmarkWithMetadata[] = []
+
+      if (hasSemanticIndex || (await loadIndex())) {
+        bookmarks = semanticSearch(query, 15).results.map((result) => result.bookmark)
+        setHasSemanticIndex(true)
+      }
+
+      if (bookmarks.length === 0) {
+        const results = await chrome.bookmarks.search(query)
+        bookmarks = results.slice(0, 15).map((b) => ({
+          id: b.id,
+          parentId: b.parentId,
+          title: b.title,
+          url: b.url,
+          dateAdded: b.dateAdded,
+        }))
+      }
+
       setSearchResults(bookmarks)
 
       // Resolve folder names for results
@@ -65,7 +79,7 @@ export function Popup() {
     } finally {
       setIsSearching(false)
     }
-  }, [])
+  }, [hasSemanticIndex])
 
   const openDashboard = () => {
     chrome.tabs.create({

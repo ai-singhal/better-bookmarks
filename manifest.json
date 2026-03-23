@@ -13,7 +13,9 @@
     "activeTab"
   ],
   "host_permissions": [
-    "https://*.supabase.co/*"
+    "https://*.supabase.co/*",
+    "https://*/*",
+    "http://*/*"
   ],
   "background": {
     "service_worker": "src/background/index.ts",

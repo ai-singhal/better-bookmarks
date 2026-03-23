@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import type { BookmarkWithMetadata } from '../../shared/types'
+import type { BookmarkInsight, BookmarkWithMetadata } from '../../shared/types'
 import { cn, formatRelativeDate, truncateUrl, getFaviconUrl } from '../../shared/utils'
 import { FolderPicker } from './FolderPicker'
+import { BookmarkInsightEditor } from './BookmarkInsightEditor'
 
 interface BookmarkTreeNodeProps {
   node: BookmarkWithMetadata
@@ -19,6 +20,8 @@ export function BookmarkTreeNode({
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState(node.title)
   const [showMovePicker, setShowMovePicker] = useState(false)
+  const [showDetails, setShowDetails] = useState(false)
+  const [insight, setInsight] = useState<BookmarkInsight | undefined>(node.insight)
   const renameInputRef = useRef<HTMLInputElement | null>(null)
   const isFolder = !node.url && node.children !== undefined
 
@@ -86,6 +89,13 @@ export function BookmarkTreeNode({
   const folderCount = isFolder
     ? node.children!.filter((c) => !c.url && c.children).length
     : 0
+  const bookmarkForEditor =
+    insight === undefined
+      ? node
+      : {
+          ...node,
+          insight,
+        }
 
   return (
     <div>
@@ -216,6 +226,22 @@ export function BookmarkTreeNode({
               </svg>
             </button>
 
+            {/* Context / reminder details */}
+            {!isFolder && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setShowDetails((current) => !current)
+                }}
+                className="p-1 rounded hover:bg-gray-700/50 text-gray-500 hover:text-gray-300 transition-colors"
+                title="Bookmark context and reminder"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </button>
+            )}
+
             {/* Delete */}
             <button
               onClick={(e) => {
@@ -241,6 +267,20 @@ export function BookmarkTreeNode({
           onSelect={(folderId) => handleMove(folderId)}
           onClose={() => setShowMovePicker(false)}
         />
+      )}
+
+      {!isFolder && showDetails && (
+        <div
+          className="px-2 pt-1 pb-3"
+          style={{ paddingLeft: `${depth * 20 + 32}px` }}
+        >
+          <div className="rounded-xl border border-gray-800 bg-gray-900/40 px-3 py-2">
+            <BookmarkInsightEditor
+              bookmark={bookmarkForEditor}
+              onInsightSaved={(nextInsight) => setInsight(nextInsight)}
+            />
+          </div>
+        </div>
       )}
 
       {/* Children */}

@@ -18,7 +18,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { folderStructure, bookmarks } = await req.json()
+    const { folderStructure } = await req.json()
 
     // Get user
     const authHeader = req.headers.get('Authorization')!
