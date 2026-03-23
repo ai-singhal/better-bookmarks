@@ -1,0 +1,57 @@
+export function setupBookmarkListeners() {
+  chrome.bookmarks.onCreated.addListener((id, bookmark) => {
+    console.log('[Bookmarks] Created:', id, bookmark.title)
+
+    // Notify popup/dashboard of new bookmark
+    chrome.runtime.sendMessage({
+      type: 'BOOKMARK_CREATED',
+      payload: { id, bookmark },
+    }).catch(() => {
+      // No listeners — popup/dashboard not open
+    })
+
+    // Update unprocessed count badge
+    updateBadge(1)
+
+    // TODO: Phase 3 — trigger embedding generation
+    // TODO: Phase 6 — show notification for new bookmark
+  })
+
+  chrome.bookmarks.onRemoved.addListener((id, removeInfo) => {
+    console.log('[Bookmarks] Removed:', id)
+    chrome.runtime.sendMessage({
+      type: 'BOOKMARK_REMOVED',
+      payload: { id, removeInfo },
+    }).catch(() => {})
+  })
+
+  chrome.bookmarks.onChanged.addListener((id, changeInfo) => {
+    console.log('[Bookmarks] Changed:', id, changeInfo)
+    chrome.runtime.sendMessage({
+      type: 'BOOKMARK_CHANGED',
+      payload: { id, changeInfo },
+    }).catch(() => {})
+  })
+
+  chrome.bookmarks.onMoved.addListener((id, moveInfo) => {
+    console.log('[Bookmarks] Moved:', id, moveInfo)
+    chrome.runtime.sendMessage({
+      type: 'BOOKMARK_MOVED',
+      payload: { id, moveInfo },
+    }).catch(() => {})
+  })
+}
+
+async function updateBadge(delta: number) {
+  const result = await chrome.storage.local.get('unprocessedCount')
+  const unprocessedCount = (result.unprocessedCount as number) || 0
+  const newCount = Math.max(0, unprocessedCount + delta)
+  await chrome.storage.local.set({ unprocessedCount: newCount })
+
+  if (newCount > 0) {
+    chrome.action.setBadgeText({ text: String(newCount) })
+    chrome.action.setBadgeBackgroundColor({ color: '#6366f1' })
+  } else {
+    chrome.action.setBadgeText({ text: '' })
+  }
+}

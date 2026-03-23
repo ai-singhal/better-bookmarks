@@ -1,0 +1,146 @@
+import { useEffect, useState } from 'react'
+import { useBookmarkStore } from '../../shared/store'
+import { getBookmarkTree, countBookmarks } from '../../shared/chromeApi'
+import type { BookmarkWithMetadata } from '../../shared/types'
+import { BookmarkTreeNode } from '../components/BookmarkTreeNode'
+
+export function BookmarkTree() {
+  const bookmarkTree = useBookmarkStore((s) => s.bookmarkTree)
+  const setBookmarkTree = useBookmarkStore((s) => s.setBookmarkTree)
+  const [loading, setLoading] = useState(true)
+  const [stats, setStats] = useState({ bookmarks: 0, folders: 0 })
+  const [creatingFolder, setCreatingFolder] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
+
+  useEffect(() => {
+    loadBookmarks()
+  }, [])
+
+  async function loadBookmarks() {
+    setLoading(true)
+    try {
+      const tree = await getBookmarkTree()
+      setBookmarkTree(tree)
+      const bookmarkCount = countBookmarks(tree)
+      const folderCount = countFolders(tree)
+      setStats({ bookmarks: bookmarkCount, folders: folderCount })
+    } catch (err) {
+      console.error('Failed to load bookmarks:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function countFolders(nodes: BookmarkWithMetadata[]): number {
+    let count = 0
+    for (const node of nodes) {
+      if (!node.url && node.children) {
+        count++
+        count += countFolders(node.children)
+      }
+    }
+    return count
+  }
+
+  // Listen for bookmark changes
+  useEffect(() => {
+    const handler = () => loadBookmarks()
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (
+        msg.type === 'BOOKMARK_CREATED' ||
+        msg.type === 'BOOKMARK_REMOVED' ||
+        msg.type === 'BOOKMARK_CHANGED' ||
+        msg.type === 'BOOKMARK_MOVED'
+      ) {
+        handler()
+      }
+    })
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-sm text-gray-400">Loading bookmarks...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // The root nodes are inside tree[0].children (Bookmarks Bar, Other Bookmarks, Mobile Bookmarks)
+  const rootChildren = bookmarkTree[0]?.children || []
+
+  return (
+    <div className="h-full flex flex-col">
+      {/* Header */}
+      <div className="px-6 py-5 border-b border-gray-800">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Bookmarks</h2>
+            <p className="text-sm text-gray-500 mt-0.5">
+              {stats.bookmarks} bookmarks in {stats.folders} folders
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setCreatingFolder(true)}
+              className="px-3 py-1.5 text-sm text-gray-300 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg transition-colors"
+            >
+              + New Folder
+            </button>
+            <button
+              onClick={loadBookmarks}
+              className="px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200 border border-gray-700 rounded-lg hover:bg-gray-800 transition-colors"
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* New folder inline input */}
+      {creatingFolder && (
+        <div className="px-6 py-3 border-b border-gray-800 flex items-center gap-2">
+          <svg className="w-4 h-4 text-indigo-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+          </svg>
+          <input
+            type="text"
+            value={newFolderName}
+            onChange={(e) => setNewFolderName(e.target.value)}
+            onKeyDown={async (e) => {
+              if (e.key === 'Enter' && newFolderName.trim()) {
+                // Create in "Other Bookmarks" (id "2") by default
+                await chrome.bookmarks.create({ parentId: '2', title: newFolderName.trim() })
+                setCreatingFolder(false)
+                setNewFolderName('')
+                loadBookmarks()
+              } else if (e.key === 'Escape') {
+                setCreatingFolder(false)
+                setNewFolderName('')
+              }
+            }}
+            onBlur={() => { setCreatingFolder(false); setNewFolderName('') }}
+            autoFocus
+            placeholder="Folder name..."
+            className="flex-1 text-sm bg-gray-800 border border-indigo-500 rounded px-2 py-1 text-gray-100 outline-none placeholder:text-gray-500"
+          />
+          <span className="text-xs text-gray-500">Enter to create, Esc to cancel</span>
+        </div>
+      )}
+
+      {/* Tree */}
+      <div className="flex-1 overflow-y-auto px-4 py-3">
+        {rootChildren.map((node) => (
+          <BookmarkTreeNode
+            key={node.id}
+            node={node}
+            depth={0}
+            onRefresh={loadBookmarks}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}

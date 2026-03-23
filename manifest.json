@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Better Bookmarks",
+  "version": "1.0.0",
+  "description": "Smart bookmark organization, semantic search, and reminders",
+  "permissions": [
+    "bookmarks",
+    "storage",
+    "alarms",
+    "notifications",
+    "identity",
+    "contextMenus",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://*.supabase.co/*"
+  ],
+  "background": {
+    "service_worker": "src/background/index.ts",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/popup/index.html",
+    "default_icon": {
+      "16": "public/icons/icon16.png",
+      "48": "public/icons/icon48.png",
+      "128": "public/icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "public/icons/icon16.png",
+    "48": "public/icons/icon48.png",
+    "128": "public/icons/icon128.png"
+  }
+}
