@@ -20,6 +20,7 @@ interface BookmarkStore {
 
   // UI state
   selectedBookmarkIds: Set<string>
+  setSelectedBookmarkIds: (ids: Set<string>) => void
   toggleSelected: (id: string) => void
   clearSelected: () => void
   expandedFolders: Set<string>
@@ -49,6 +50,7 @@ export const useBookmarkStore = create<BookmarkStore>((set) => ({
   setSuggestions: (s) => set({ suggestions: s }),
 
   selectedBookmarkIds: new Set(),
+  setSelectedBookmarkIds: (ids) => set({ selectedBookmarkIds: new Set(ids) }),
   toggleSelected: (id) =>
     set((state) => {
       const next = new Set(state.selectedBookmarkIds)

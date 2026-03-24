@@ -5,6 +5,7 @@ import type { BookmarkWithMetadata } from '../../shared/types'
 import { BookmarkTreeNode } from '../components/BookmarkTreeNode'
 import { executeActions, getOpenAIKey, streamAI, type AIAction, type AIResponse } from '../../lib/openaiService'
 import { cn } from '../../shared/utils'
+import { FolderPicker } from '../components/FolderPicker'
 
 function countFolders(nodes: BookmarkWithMetadata[]): number {
   let count = 0
@@ -15,6 +16,17 @@ function countFolders(nodes: BookmarkWithMetadata[]): number {
     }
   }
   return count
+}
+
+function flattenAllNodes(nodes: BookmarkWithMetadata[]): BookmarkWithMetadata[] {
+  const result: BookmarkWithMetadata[] = []
+  for (const node of nodes) {
+    result.push(node)
+    if (node.children?.length) {
+      result.push(...flattenAllNodes(node.children))
+    }
+  }
+  return result
 }
 
 function isDescendantFolder(
@@ -103,23 +115,48 @@ function formatTreeActionPreview(action: AIAction, titleMap: Map<string, string>
 export function BookmarkTree() {
   const bookmarkTree = useBookmarkStore((s) => s.bookmarkTree)
   const setBookmarkTree = useBookmarkStore((s) => s.setBookmarkTree)
+  const selectedBookmarkIds = useBookmarkStore((s) => s.selectedBookmarkIds)
+  const setSelectedBookmarkIds = useBookmarkStore((s) => s.setSelectedBookmarkIds)
+  const clearSelected = useBookmarkStore((s) => s.clearSelected)
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({ bookmarks: 0, folders: 0 })
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null)
-  const [aiTargetNode, setAiTargetNode] = useState<BookmarkWithMetadata | null>(null)
+  const [aiTargetNodes, setAiTargetNodes] = useState<BookmarkWithMetadata[] | null>(null)
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiResponse, setAiResponse] = useState<AIResponse | null>(null)
   const [aiLoading, setAiLoading] = useState(false)
   const [aiExecuting, setAiExecuting] = useState(false)
   const [aiExecutionResult, setAiExecutionResult] = useState<{ success: number; failed: number; errors: string[] } | null>(null)
+  const [moveSelectionNodes, setMoveSelectionNodes] = useState<BookmarkWithMetadata[] | null>(null)
 
   // Drag-and-drop reorder state
   const dragNodeRef = useRef<BookmarkWithMetadata | null>(null)
+  const dragSelectionRef = useRef<BookmarkWithMetadata[]>([])
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const [dragPosition, setDragPosition] = useState<'above' | 'below' | 'inside' | null>(null)
   const suppressedMoveIdsRef = useRef<Map<string, number>>(new Map())
+  const lastSelectedIdRef = useRef<string | null>(null)
+
+  // The root nodes are inside tree[0].children (Bookmarks Bar, Other Bookmarks, Mobile Bookmarks)
+  const rootChildren = bookmarkTree[0]?.children || []
+  const nodeTitleMap = buildNodeTitleMap(rootChildren)
+  const allNodes = flattenAllNodes(rootChildren)
+  const nodeMap = new Map(allNodes.map((node) => [node.id, node]))
+
+  const selectedNodes = [...selectedBookmarkIds]
+    .map((id) => nodeMap.get(id))
+    .filter((node): node is BookmarkWithMetadata => Boolean(node))
+
+  const effectiveSelectedNodes = selectedNodes.filter((node) => {
+    let parentId = node.parentId
+    while (parentId) {
+      if (selectedBookmarkIds.has(parentId)) return false
+      parentId = nodeMap.get(parentId)?.parentId
+    }
+    return true
+  })
 
   const loadBookmarks = useCallback(async (showSpinner = false) => {
     if (showSpinner) {
@@ -140,17 +177,30 @@ export function BookmarkTree() {
     }
   }, [setBookmarkTree])
 
+  const getVisibleNodeOrder = () => [...document.querySelectorAll<HTMLElement>('[data-bookmark-tree-node-id]')]
+    .map((element) => element.dataset.bookmarkTreeNodeId)
+    .filter((id): id is string => Boolean(id))
+
   const handleDragStart = useCallback((e: React.DragEvent, node: BookmarkWithMetadata) => {
     dragNodeRef.current = node
+    const selectedIds = selectedBookmarkIds.has(node.id)
+      ? new Set(effectiveSelectedNodes.map((item) => item.id))
+      : new Set<string>([node.id])
+    const orderedIds = getVisibleNodeOrder()
+    dragSelectionRef.current = orderedIds
+      .map((id) => nodeMap.get(id))
+      .filter((item): item is BookmarkWithMetadata => item !== undefined && selectedIds.has(item.id))
+
     e.dataTransfer.effectAllowed = 'move'
     e.dataTransfer.setData('text/plain', node.id)
     const el = e.currentTarget as HTMLElement
     el.style.opacity = '0.5'
     requestAnimationFrame(() => { el.style.opacity = '' })
-  }, [])
+  }, [effectiveSelectedNodes, nodeMap, selectedBookmarkIds])
 
   const clearDragState = useCallback(() => {
     dragNodeRef.current = null
+    dragSelectionRef.current = []
     setDragOverId(null)
     setDragPosition(null)
   }, [])
@@ -160,8 +210,10 @@ export function BookmarkTree() {
     e.dataTransfer.dropEffect = 'move'
     const dragNode = dragNodeRef.current
     if (!dragNode || dragNode.id === targetNode.id) return
+    const draggedIds = new Set(dragSelectionRef.current.map((node) => node.id))
+    if (draggedIds.has(targetNode.id)) return
     const roots = bookmarkTree[0]?.children || bookmarkTree
-    if (!dragNode.url && isDescendantFolder(roots, dragNode.id, targetNode.id)) return
+    if (dragSelectionRef.current.some((node) => !node.url && isDescendantFolder(roots, node.id, targetNode.id))) return
 
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const upperThreshold = rect.top + rect.height * 0.3
@@ -180,8 +232,14 @@ export function BookmarkTree() {
     e.preventDefault()
     const dragNode = dragNodeRef.current
     if (!dragNode || dragNode.id === targetNode.id) return
+    const draggedNodes = dragSelectionRef.current.length > 0 ? dragSelectionRef.current : [dragNode]
+    const draggedIds = new Set(draggedNodes.map((node) => node.id))
+    if (draggedIds.has(targetNode.id)) {
+      clearDragState()
+      return
+    }
     const roots = bookmarkTree[0]?.children || bookmarkTree
-    if (!dragNode.url && isDescendantFolder(roots, dragNode.id, targetNode.id)) {
+    if (draggedNodes.some((node) => !node.url && isDescendantFolder(roots, node.id, targetNode.id))) {
       clearDragState()
       return
     }
@@ -213,8 +271,13 @@ export function BookmarkTree() {
         return
       }
 
-      await chrome.bookmarks.move(dragNode.id, destination)
-      suppressedMoveIdsRef.current.set(dragNode.id, Date.now())
+      for (const [offset, draggedNodeItem] of draggedNodes.entries()) {
+        await chrome.bookmarks.move(draggedNodeItem.id, {
+          parentId: destination.parentId,
+          index: destination.index !== undefined ? destination.index + offset : undefined,
+        })
+        suppressedMoveIdsRef.current.set(draggedNodeItem.id, Date.now())
+      }
       await loadBookmarks(false)
     } catch (err) {
       console.error('Reorder failed:', err)
@@ -231,20 +294,34 @@ export function BookmarkTree() {
   }, [loadBookmarks])
 
   useEffect(() => {
-    if (!aiTargetNode) return
+    if (!aiTargetNodes) return
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setAiTargetNode(null)
+        setAiTargetNodes(null)
         setAiPrompt('')
         setAiResponse(null)
         setAiExecutionResult(null)
+        setMoveSelectionNodes(null)
       }
     }
 
     document.addEventListener('keydown', handleEscape)
     return () => document.removeEventListener('keydown', handleEscape)
-  }, [aiTargetNode])
+  }, [aiTargetNodes])
+
+  useEffect(() => {
+    if (selectedBookmarkIds.size === 0 || aiTargetNodes || moveSelectionNodes) return
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        clearSelected()
+      }
+    }
+
+    document.addEventListener('keydown', handleEscape)
+    return () => document.removeEventListener('keydown', handleEscape)
+  }, [aiTargetNodes, clearSelected, moveSelectionNodes, selectedBookmarkIds.size])
 
   // Listen for bookmark changes
   useEffect(() => {
@@ -282,10 +359,6 @@ export function BookmarkTree() {
     )
   }
 
-  // The root nodes are inside tree[0].children (Bookmarks Bar, Other Bookmarks, Mobile Bookmarks)
-  const rootChildren = bookmarkTree[0]?.children || []
-  const nodeTitleMap = buildNodeTitleMap(rootChildren)
-
   const buildNodeAiContext = (node: BookmarkWithMetadata) => {
     const counts = countNodeContents(node)
     const parentTitle = node.parentId ? nodeTitleMap.get(node.parentId) || node.parentId : 'Root'
@@ -301,16 +374,124 @@ export function BookmarkTree() {
     ].join('\n')
   }
 
-  const handleOpenNodeAI = (node: BookmarkWithMetadata) => {
-    setAiTargetNode(node)
+  const buildSelectionAiContext = (nodes: BookmarkWithMetadata[]) => {
+    if (nodes.length === 1) return buildNodeAiContext(nodes[0])
+
+    return [
+      'Focused selection for this request:',
+      ...nodes.map((node, index) => {
+        const counts = countNodeContents(node)
+        const parentTitle = node.parentId ? nodeTitleMap.get(node.parentId) || node.parentId : 'Root'
+        return [
+          `${index + 1}. ${node.url ? '[Bookmark]' : '[Folder]'} ${node.title || 'Untitled'} (${node.id})`,
+          `   Parent: ${parentTitle}`,
+          node.url
+            ? `   URL: ${node.url}`
+            : `   Contains: ${Math.max(counts.bookmarks, 0)} bookmarks and ${Math.max(counts.folders - 1, 0)} subfolders`,
+          '   Subtree:',
+          serializeNodeSubtree(node)
+            .split('\n')
+            .map((line) => `   ${line}`)
+            .join('\n'),
+        ].join('\n')
+      }),
+      'Prefer actions that only affect these selected bookmarks or folder subtrees unless the user explicitly asks for broader changes.',
+    ].join('\n')
+  }
+
+  const resetAiState = () => {
     setAiPrompt('')
     setAiResponse(null)
     setAiExecutionResult(null)
   }
 
+  const handleOpenNodeAI = (node: BookmarkWithMetadata) => {
+    setAiTargetNodes([node])
+    resetAiState()
+  }
+
+  const handleOpenSelectionAI = () => {
+    if (effectiveSelectedNodes.length === 0) return
+    setAiTargetNodes(effectiveSelectedNodes)
+    resetAiState()
+  }
+
+  const handleSelectNode = (
+    node: BookmarkWithMetadata,
+    mode: 'single' | 'toggle' | 'range'
+  ) => {
+    if (mode === 'range') {
+      const anchorId = lastSelectedIdRef.current || node.id
+      const orderedIds = [...document.querySelectorAll<HTMLElement>('[data-bookmark-tree-node-id]')]
+        .map((element) => element.dataset.bookmarkTreeNodeId)
+        .filter((id): id is string => Boolean(id))
+
+      const anchorIndex = orderedIds.indexOf(anchorId)
+      const targetIndex = orderedIds.indexOf(node.id)
+
+      if (anchorIndex >= 0 && targetIndex >= 0) {
+        const [start, end] = anchorIndex < targetIndex
+          ? [anchorIndex, targetIndex]
+          : [targetIndex, anchorIndex]
+        setSelectedBookmarkIds(new Set(orderedIds.slice(start, end + 1)))
+      } else {
+        setSelectedBookmarkIds(new Set([node.id]))
+      }
+      lastSelectedIdRef.current = node.id
+      return
+    }
+
+    if (mode === 'toggle') {
+      const next = new Set(selectedBookmarkIds)
+      if (next.has(node.id)) next.delete(node.id)
+      else next.add(node.id)
+      setSelectedBookmarkIds(next)
+      lastSelectedIdRef.current = node.id
+      return
+    }
+
+    if (selectedBookmarkIds.size === 1 && selectedBookmarkIds.has(node.id)) {
+      lastSelectedIdRef.current = node.id
+      return
+    }
+    setSelectedBookmarkIds(new Set([node.id]))
+    lastSelectedIdRef.current = node.id
+  }
+
+  const handleDeleteSelection = async () => {
+    if (effectiveSelectedNodes.length === 0) return
+    const confirmed = window.confirm(`Delete ${effectiveSelectedNodes.length} selected item${effectiveSelectedNodes.length !== 1 ? 's' : ''}?`)
+    if (!confirmed) return
+
+    for (const node of effectiveSelectedNodes) {
+      if (node.url) {
+        await chrome.bookmarks.remove(node.id)
+      } else {
+        await chrome.bookmarks.removeTree(node.id)
+      }
+    }
+
+    clearSelected()
+    await loadBookmarks(false)
+  }
+
+  const handleMoveSelection = async (folderId: string) => {
+    if (!moveSelectionNodes?.length) return
+
+    for (const node of moveSelectionNodes) {
+      if (node.id === folderId) continue
+      if (!node.url && isDescendantFolder(rootChildren, node.id, folderId)) continue
+      await chrome.bookmarks.move(node.id, { parentId: folderId })
+    }
+
+    setMoveSelectionNodes(null)
+    clearSelected()
+    await loadBookmarks(false)
+  }
+
   const handleAskNodeAI = async () => {
     const prompt = aiPrompt.trim()
-    if (!aiTargetNode || !prompt || aiLoading) return
+    if (!aiTargetNodes?.length || !prompt || aiLoading) return
 
     setAiLoading(true)
     setAiResponse({ message: 'Thinking…', actions: [] })
@@ -331,7 +512,7 @@ export function BookmarkTree() {
           },
         },
         {
-          additionalContext: buildNodeAiContext(aiTargetNode),
+          additionalContext: buildSelectionAiContext(aiTargetNodes),
         }
       )
       setAiResponse(response)
@@ -432,6 +613,12 @@ export function BookmarkTree() {
             depth={0}
             onRefresh={loadBookmarks}
             onAskAI={handleOpenNodeAI}
+            selectedIds={selectedBookmarkIds}
+            onSelectNode={handleSelectNode}
+            onOpenSelectionAI={handleOpenSelectionAI}
+            onOpenMoveSelection={() => setMoveSelectionNodes(effectiveSelectedNodes)}
+            onDeleteSelection={handleDeleteSelection}
+            onClearSelection={clearSelected}
             onDragStart={handleDragStart}
             onDragEnd={clearDragState}
             onDragOver={handleDragOver}
@@ -442,7 +629,14 @@ export function BookmarkTree() {
         ))}
       </div>
 
-      {aiTargetNode && (
+      {moveSelectionNodes && (
+        <FolderPicker
+          onSelect={(folderId) => void handleMoveSelection(folderId)}
+          onClose={() => setMoveSelectionNodes(null)}
+        />
+      )}
+
+      {aiTargetNodes && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/80 backdrop-blur-sm p-6">
           <div className="w-full max-w-2xl rounded-2xl border border-gray-800 bg-gray-900 shadow-2xl">
             <div className="flex items-start justify-between gap-4 border-b border-gray-800 px-5 py-4">
@@ -451,20 +645,22 @@ export function BookmarkTree() {
                   Bookmark Tree AI
                 </p>
                 <h3 className="mt-1 text-lg font-semibold text-gray-100">
-                  {aiTargetNode.title || 'Untitled'}
+                  {aiTargetNodes.length === 1
+                    ? aiTargetNodes[0].title || 'Untitled'
+                    : `${aiTargetNodes.length} selected items`}
                 </h3>
                 <p className="mt-1 text-sm text-gray-500">
-                  {aiTargetNode.url
-                    ? 'Ask AI how to rename, move, or clean up this bookmark.'
-                    : 'Ask AI how to organize this folder, create subfolders, or reorder its contents.'}
+                  {aiTargetNodes.length === 1
+                    ? aiTargetNodes[0].url
+                      ? 'Ask AI how to rename, move, or clean up this bookmark.'
+                      : 'Ask AI how to organize this folder, create subfolders, or reorder its contents.'
+                    : 'Ask AI what to do with this selection, how to group it, or where to move it.'}
                 </p>
               </div>
               <button
                 onClick={() => {
-                  setAiTargetNode(null)
-                  setAiPrompt('')
-                  setAiResponse(null)
-                  setAiExecutionResult(null)
+                  setAiTargetNodes(null)
+                  resetAiState()
                 }}
                 className="rounded-lg p-2 text-gray-500 hover:bg-gray-800 hover:text-gray-300 transition-colors"
               >
@@ -492,9 +688,11 @@ export function BookmarkTree() {
                     }}
                     rows={4}
                     autoFocus
-                    placeholder={aiTargetNode.url
-                      ? 'Example: move this into my ML folder and rename it to be clearer'
-                      : 'Example: split this folder into cleaner subfolders and put the most important links first'}
+                    placeholder={aiTargetNodes.length === 1
+                      ? aiTargetNodes[0].url
+                        ? 'Example: move this into my ML folder and rename it to be clearer'
+                        : 'Example: split this folder into cleaner subfolders and put the most important links first'
+                      : 'Example: group these into cleaner folders and move them where they belong'}
                     className="w-full rounded-xl border border-gray-700 bg-gray-950 px-4 py-3 text-sm text-gray-100 placeholder:text-gray-600 outline-none focus:border-cyan-500"
                   />
 

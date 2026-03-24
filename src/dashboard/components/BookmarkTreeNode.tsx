@@ -9,6 +9,12 @@ interface BookmarkTreeNodeProps {
   depth: number
   onRefresh: () => void
   onAskAI?: (node: BookmarkWithMetadata) => void
+  selectedIds?: Set<string>
+  onSelectNode?: (node: BookmarkWithMetadata, mode: 'single' | 'toggle' | 'range') => void
+  onOpenSelectionAI?: () => void
+  onOpenMoveSelection?: () => void
+  onDeleteSelection?: () => void
+  onClearSelection?: () => void
   onDragStart?: (e: React.DragEvent, node: BookmarkWithMetadata) => void
   onDragEnd?: () => void
   onDragOver?: (e: React.DragEvent, node: BookmarkWithMetadata) => void
@@ -22,6 +28,12 @@ export function BookmarkTreeNode({
   depth,
   onRefresh,
   onAskAI,
+  selectedIds,
+  onSelectNode,
+  onOpenSelectionAI,
+  onOpenMoveSelection,
+  onDeleteSelection,
+  onClearSelection,
   onDragStart,
   onDragEnd,
   onDragOver,
@@ -40,6 +52,9 @@ export function BookmarkTreeNode({
   const renameInputRef = useRef<HTMLInputElement | null>(null)
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
   const isFolder = !node.url && node.children !== undefined
+  const isSelected = selectedIds?.has(node.id) || false
+  const selectedCount = selectedIds?.size || 0
+  const showBatchMenu = isSelected && selectedCount > 1
 
   useEffect(() => {
     if (isRenaming && renameInputRef.current) {
@@ -177,11 +192,16 @@ export function BookmarkTreeNode({
         onContextMenu={(e) => {
           e.preventDefault()
           e.stopPropagation()
+          if (!isSelected) {
+            onSelectNode?.(node, 'single')
+          }
           document.dispatchEvent(new CustomEvent('bookmark-tree-context-menu', { detail: node.id }))
           setContextMenu({ x: e.clientX, y: e.clientY })
         }}
+        data-bookmark-tree-node-id={node.id}
         className={cn(
           'flex items-center gap-2 px-2 py-1.5 rounded-lg group cursor-pointer hover:bg-gray-800/50 transition-colors',
+          isSelected && 'bg-indigo-500/15 ring-1 ring-inset ring-indigo-500/40',
           (showActions || contextMenu) && 'bg-gray-800/50',
           dragOverId === node.id && dragPosition === 'above' && 'border-t-2 border-t-indigo-500',
           dragOverId === node.id && dragPosition === 'below' && 'border-b-2 border-b-indigo-500',
@@ -190,7 +210,16 @@ export function BookmarkTreeNode({
         style={{ paddingLeft: `${depth * 20 + 8}px` }}
         onMouseEnter={() => setShowActions(true)}
         onMouseLeave={() => setShowActions(false)}
-        onClick={() => {
+        onClick={(e) => {
+          if (e.shiftKey) {
+            onSelectNode?.(node, 'range')
+            return
+          }
+          if (e.metaKey || e.ctrlKey) {
+            onSelectNode?.(node, 'toggle')
+            return
+          }
+          onSelectNode?.(node, 'single')
           if (isRenaming) return
           if (isFolder) {
             setExpanded(!expanded)
@@ -359,6 +388,63 @@ export function BookmarkTreeNode({
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >
+          {showBatchMenu ? (
+            <>
+              <div className="px-3 py-2 text-[11px] uppercase tracking-wider text-gray-500">
+                {selectedCount} selected
+              </div>
+              <button
+                onClick={() => {
+                  setContextMenu(null)
+                  onOpenSelectionAI?.()
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
+              >
+                <svg className="h-4 w-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.5 4.5a3.5 3.5 0 00-3.5 3.5v.5a3 3 0 00-2 2.828V13a3 3 0 003 3h.25a2.75 2.75 0 002.5 2h.5A2.75 2.75 0 0013 16h.5a2.5 2.5 0 002.5-2.5V13h.25a3 3 0 003-3v-1.672A3 3 0 0017 5.5V5a3.5 3.5 0 00-6.362-2.044A3.48 3.48 0 009.5 4.5zm-1 4.25h.5m6.5 0h.5M9 12.5h1m4 0h1M12 4v10" />
+                </svg>
+                Ask AI About Selection
+              </button>
+              <button
+                onClick={() => {
+                  setContextMenu(null)
+                  onOpenMoveSelection?.()
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
+              >
+                <svg className="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
+                Move Selection
+              </button>
+              <button
+                onClick={() => {
+                  setContextMenu(null)
+                  void onDeleteSelection?.()
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-red-300 hover:bg-red-950/40"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Delete Selection
+              </button>
+              <div className="my-1 border-t border-gray-800" />
+              <button
+                onClick={() => {
+                  setContextMenu(null)
+                  onClearSelection?.()
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-gray-300 hover:bg-gray-800"
+              >
+                <svg className="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                Clear Selection
+              </button>
+            </>
+          ) : (
+            <>
           {!isFolder && (
             <button
               onClick={() => {
@@ -477,6 +563,8 @@ export function BookmarkTreeNode({
             </svg>
             Delete
           </button>
+            </>
+          )}
         </div>
       )}
 
@@ -510,6 +598,12 @@ export function BookmarkTreeNode({
               dragOverId={dragOverId}
               dragPosition={dragPosition}
               onAskAI={onAskAI}
+              selectedIds={selectedIds}
+              onSelectNode={onSelectNode}
+              onOpenSelectionAI={onOpenSelectionAI}
+              onOpenMoveSelection={onOpenMoveSelection}
+              onDeleteSelection={onDeleteSelection}
+              onClearSelection={onClearSelection}
             />
           ))}
           {node.children.length === 0 && (
