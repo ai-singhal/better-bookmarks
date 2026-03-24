@@ -10,6 +10,7 @@ import {
 } from '../../lib/bookmarkInsightService'
 import { fetchPageWithJina, extractSummary } from '../../lib/jinaService'
 import { getOpenAIKey, streamAI, executeActions, type AIAction, type AIResponse } from '../../lib/openaiService'
+import { confirmSnapshotProtection } from '../../lib/aiActionSafety'
 import type { BookmarkWithMetadata, TriageStatus, FolderDescription } from '../../shared/types'
 import { cn, getFaviconUrl, formatRelativeDate, truncateUrl } from '../../shared/utils'
 
@@ -498,6 +499,7 @@ export function Discover() {
 
     const executableActions = targetMessage.response.actions.filter((action) => action.type !== 'search_results')
     if (executableActions.length === 0) return
+    if (!(await confirmSnapshotProtection(executableActions))) return
 
     setAiThreads((prev) => ({
       ...prev,

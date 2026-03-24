@@ -4,6 +4,7 @@ import { getBookmarkTree, countBookmarks } from '../../shared/chromeApi'
 import type { BookmarkWithMetadata } from '../../shared/types'
 import { BookmarkTreeNode } from '../components/BookmarkTreeNode'
 import { executeActions, getOpenAIKey, streamAI, type AIAction, type AIResponse } from '../../lib/openaiService'
+import { confirmSnapshotProtection } from '../../lib/aiActionSafety'
 import { cn } from '../../shared/utils'
 import { FolderPicker } from '../components/FolderPicker'
 
@@ -99,6 +100,8 @@ function formatTreeActionPreview(action: AIAction, titleMap: Map<string, string>
   switch (action.type) {
     case 'create_folder':
       return `Create "${action.title || 'New Folder'}"${action.parentId ? ` inside "${titleMap.get(action.parentId) || action.parentId}"` : ''}`
+    case 'create_snapshot':
+      return `Create snapshot${action.title ? ` "${action.title}"` : ''}`
     case 'move':
       return `"${titleMap.get(action.bookmarkId || '') || action.bookmarkId}" -> "${titleMap.get(action.destinationFolderId || '') || action.destinationFolderId}"`
     case 'rename':
@@ -530,6 +533,7 @@ export function BookmarkTree() {
     if (!aiResponse) return
     const executableActions = aiResponse.actions.filter((action) => action.type !== 'search_results')
     if (executableActions.length === 0 || aiExecuting) return
+    if (!(await confirmSnapshotProtection(executableActions))) return
 
     setAiExecuting(true)
     try {

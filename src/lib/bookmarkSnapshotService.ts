@@ -15,6 +15,11 @@ export const BOOKMARK_RESTORE_IN_PROGRESS_KEY = 'bookmark_restore_in_progress_v1
 const MAX_SNAPSHOTS = 3
 const CHUNK_SIZE = 3000
 
+export interface LatestSnapshotComparison {
+  latestSnapshot: BookmarkTreeSnapshotSummary | null
+  matchesCurrentTree: boolean | null
+}
+
 function normalizeRootKey(node: chrome.bookmarks.BookmarkTreeNode): string {
   return node.title.trim().toLowerCase().replace(/\s+/g, '_')
 }
@@ -148,6 +153,26 @@ export async function listBookmarkTreeSnapshots(): Promise<BookmarkTreeSnapshotS
   return manifest
     .sort((a, b) => b.createdAt - a.createdAt)
     .map(({ chunkCount: _chunkCount, ...summary }) => summary)
+}
+
+export async function compareCurrentTreeWithLatestSnapshot(): Promise<LatestSnapshotComparison> {
+  const latestSnapshot = (await listBookmarkTreeSnapshots())[0] || null
+  if (!latestSnapshot) {
+    return { latestSnapshot: null, matchesCurrentTree: null }
+  }
+
+  const snapshot = await loadSnapshotPayload(latestSnapshot.id)
+  if (!snapshot) {
+    return { latestSnapshot, matchesCurrentTree: null }
+  }
+
+  const currentTree = await chrome.bookmarks.getTree()
+  const currentRoots = buildSnapshotRoots(currentTree)
+
+  return {
+    latestSnapshot,
+    matchesCurrentTree: JSON.stringify(currentRoots) === JSON.stringify(snapshot.roots),
+  }
 }
 
 export async function createBookmarkTreeSnapshot(label?: string): Promise<BookmarkTreeSnapshotSummary> {

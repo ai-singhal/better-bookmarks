@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { getBookmarkTree, flattenBookmarks } from '../../shared/chromeApi'
 import { streamAI, executeActions, getOpenAIKey, setOpenAIKey, getOpenAIModel, setOpenAIModel, OPENAI_MODELS, DEFAULT_OPENAI_MODEL, type AIAction, type AIResponse } from '../../lib/openaiService'
+import { confirmSnapshotProtection } from '../../lib/aiActionSafety'
 import type { BookmarkWithMetadata } from '../../shared/types'
 import { cn, getFaviconUrl, markFaviconUnavailable, truncateUrl, formatRelativeDate } from '../../shared/utils'
 
@@ -194,6 +195,8 @@ function formatActionPreview(
   switch (action.type) {
     case 'create_folder':
       return `Create "${action.title || 'New Folder'}"${action.parentId ? ` inside "${folderTitles.get(action.parentId) || action.parentId}"` : ''}`
+    case 'create_snapshot':
+      return `Create snapshot${action.title ? ` "${action.title}"` : ''}`
     case 'move':
       return `"${bookmarkTitles.get(action.bookmarkId || '') || action.bookmarkId}" -> "${folderTitles.get(action.destinationFolderId || '') || action.destinationFolderId}"`
     case 'delete':
@@ -543,6 +546,7 @@ export function Command() {
     // Filter out search_results — those don't need execution
     const executableActions = msg.response.actions.filter(a => a.type !== 'search_results')
     if (executableActions.length === 0) return
+    if (!(await confirmSnapshotProtection(executableActions))) return
 
     setMessages(prev => prev.map((m, i) =>
       i === msgIndex ? { ...m, executing: true } : m

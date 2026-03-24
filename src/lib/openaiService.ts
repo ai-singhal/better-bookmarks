@@ -1,6 +1,7 @@
 // OpenAI-powered bookmark AI — search, organize, mass operations
 // Calls OpenAI API directly from extension, key stored in chrome.storage.sync
 
+import { createBookmarkTreeSnapshot } from './bookmarkSnapshotService'
 import type { BookmarkWithMetadata } from '../shared/types'
 
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions'
@@ -50,7 +51,7 @@ function isSupportedOpenAIModel(model: string): boolean {
 // ─── Types ───
 
 export interface AIAction {
-  type: 'move' | 'create_folder' | 'reorder' | 'delete' | 'rename' | 'search_results'
+  type: 'move' | 'create_folder' | 'reorder' | 'delete' | 'rename' | 'search_results' | 'create_snapshot'
   bookmarkId?: string
   bookmarkIds?: string[]
   destinationFolderId?: string
@@ -179,7 +180,8 @@ You can:
 4. **Create Folders** — Create new folders. Use "create_folder" with parentId and title.
 5. **Delete** — Remove bookmarks or empty folders. Use "delete" actions.
 6. **Rename** — Rename bookmarks or folders. Use "rename" actions with new title.
-7. **Bulk operations** — You can return multiple actions at once.
+7. **Create Snapshots** — Save a rollback snapshot of the current bookmark tree. Use "create_snapshot" with an optional title.
+8. **Bulk operations** — You can return multiple actions at once.
 
 ## Response Format
 You MUST respond with valid JSON only (no markdown, no code fences). The schema:
@@ -191,6 +193,7 @@ You MUST respond with valid JSON only (no markdown, no code fences). The schema:
     { "type": "reorder", "bookmarkId": "id", "parentId": "folderId", "index": 0 },
     { "type": "delete", "bookmarkId": "id" },
     { "type": "rename", "bookmarkId": "id", "title": "New Title" },
+    { "type": "create_snapshot", "title": "Before Purdue Reorg" },
     { "type": "search_results", "bookmarkIds": ["id1", "id2"] }
   ],
   "searchResults": [
@@ -206,6 +209,7 @@ Rules:
 - Never put folder IDs or made-up IDs in "searchResults". They must always be real bookmark IDs.
 - For move/organize requests, generate the actual move actions with real IDs from the tree
 - When the user asks to preview a reorganization before applying it, include the proposed folder structure or ordering plan directly in the "message" field and also include the planned actions in the "actions" array. The UI will not execute them until the user confirms.
+- If the user explicitly asks for a backup, restore point, or snapshot, include a "create_snapshot" action. Do not create snapshots unless the user asks for one.
 - If a folder doesn't exist yet and is needed, create it first (create_folder action) then reference it. Use a placeholder ID like "new_1", "new_2" for new folders and reference them in subsequent move actions.
 - Be smart about organization — group by topic, domain, or purpose as appropriate
 - When reordering, specify the new index positions carefully
@@ -538,6 +542,12 @@ export async function executeActions(
           folderIdMap.set(placeholderKey, result.id)
           bookmarkState = await readBookmarkState()
           onProgress?.(i + 1, actions.length, `Created folder "${action.title}"`)
+          success++
+          break
+        }
+        case 'create_snapshot': {
+          const snapshot = await createBookmarkTreeSnapshot(action.title)
+          onProgress?.(i + 1, actions.length, `Created snapshot "${snapshot.label}"`)
           success++
           break
         }
