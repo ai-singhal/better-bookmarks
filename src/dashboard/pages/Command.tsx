@@ -154,7 +154,7 @@ export function Command() {
           <div className="text-center mb-8">
             <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-600 to-purple-600 flex items-center justify-center mx-auto mb-4">
               <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.5 4.5a3.5 3.5 0 00-3.5 3.5v.5a3 3 0 00-2 2.828V13a3 3 0 003 3h.25a2.75 2.75 0 002.5 2h.5A2.75 2.75 0 0013 16h.5a2.5 2.5 0 002.5-2.5V13h.25a3 3 0 003-3v-1.672A3 3 0 0017 5.5V5a3.5 3.5 0 00-6.362-2.044A3.48 3.48 0 009.5 4.5zm-1 4.25h.5m6.5 0h.5M9 12.5h1m4 0h1M12 4v10" />
               </svg>
             </div>
             <h2 className="text-xl font-semibold text-gray-100">Set up AI</h2>
@@ -182,7 +182,7 @@ export function Command() {
               {savingKey ? 'Saving...' : 'Save & Continue'}
             </button>
             <p className="text-[11px] text-gray-600 text-center">
-              Defaults to GPT-5.4 mini. You can switch models later from Settings or the Command header.
+              Defaults to GPT-5.4 mini. You can switch models later from Settings or the AI Chat header.
             </p>
           </div>
         </div>
@@ -204,7 +204,7 @@ export function Command() {
       <div className="px-6 py-5 border-b border-gray-800 flex-shrink-0">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold">Command</h2>
+            <h2 className="text-lg font-semibold">AI Chat</h2>
             <p className="text-sm text-gray-500 mt-0.5">
               Search, organize, and manage your bookmarks with natural language.
             </p>

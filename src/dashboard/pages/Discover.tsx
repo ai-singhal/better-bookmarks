@@ -55,13 +55,26 @@ export function Discover() {
   const [showNoteInput, setShowNoteInput] = useState(false)
   const [tagInput, setTagInput] = useState('')
   const [currentInsight, setCurrentInsight] = useState<{ reason: string; tags: string[] } | null>(null)
-  const [animDirection, setAnimDirection] = useState<'left' | 'right' | 'up' | 'down' | null>(null)
+  const [animDirection, setAnimDirection] = useState<'left' | 'right' | 'up' | null>(null)
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null)
   const [folderDescInput, setFolderDescInput] = useState('')
   const [folderPriorityInput, setFolderPriorityInput] = useState<FolderDescription['priority']>('medium')
+  const currentBookmark = filteredBookmarks[currentIndex] || null
 
   const cardRef = useRef<HTMLDivElement>(null)
   const summaryCache = useRef<Map<string, string>>(new Map())
+  const currentBookmarkIdRef = useRef<string | null>(null)
+  const currentIndexRef = useRef(0)
+  const preferredBookmarkIdRef = useRef<string | null>(null)
+  const forceResetIndexRef = useRef(false)
+
+  useEffect(() => {
+    currentBookmarkIdRef.current = currentBookmark?.id ?? null
+  }, [currentBookmark?.id])
+
+  useEffect(() => {
+    currentIndexRef.current = currentIndex
+  }, [currentIndex])
 
   // Load everything
   useEffect(() => {
@@ -75,7 +88,9 @@ export function Discover() {
       const triage = await getTriageRecords()
       const mapped: Record<string, { status: TriageStatus }> = {}
       for (const [id, rec] of Object.entries(triage)) {
-        mapped[id] = { status: rec.status }
+        if (rec.status === 'keep' || rec.status === 'delete') {
+          mapped[id] = { status: rec.status }
+        }
       }
       setTriageMap(mapped)
 
@@ -101,10 +116,30 @@ export function Discover() {
     }
 
     setFilteredBookmarks(result)
-    setCurrentIndex(0)
-  }, [allBookmarks, filterMode, selectedFolder, triageMap])
+    setCurrentIndex(() => {
+      if (result.length === 0) return 0
 
-  const currentBookmark = filteredBookmarks[currentIndex] || null
+      if (forceResetIndexRef.current) {
+        forceResetIndexRef.current = false
+        return 0
+      }
+
+      const preferredId = preferredBookmarkIdRef.current
+      if (preferredId) {
+        const preferredIndex = result.findIndex((bookmark) => bookmark.id === preferredId)
+        preferredBookmarkIdRef.current = null
+        if (preferredIndex >= 0) return preferredIndex
+      }
+
+      const currentId = currentBookmarkIdRef.current
+      if (currentId) {
+        const existingIndex = result.findIndex((bookmark) => bookmark.id === currentId)
+        if (existingIndex >= 0) return existingIndex
+      }
+
+      return Math.min(currentIndexRef.current, result.length - 1)
+    })
+  }, [allBookmarks, filterMode, selectedFolder, triageMap])
 
   // Fetch AI summary for current card
   useEffect(() => {
@@ -149,19 +184,39 @@ export function Discover() {
     })
   }, [currentBookmark?.id])
 
-  const animateAndAdvance = useCallback((direction: 'left' | 'right' | 'up' | 'down') => {
+  const animateCard = useCallback((direction: 'left' | 'right' | 'up', afterAnimation?: () => void) => {
     setAnimDirection(direction)
     setTimeout(() => {
       setAnimDirection(null)
       setShowNoteInput(false)
-      setNoteInput('')
       setTagInput('')
-      setCurrentIndex((i) => Math.min(i + 1, filteredBookmarks.length))
-    }, 300)
-  }, [filteredBookmarks.length])
+      afterAnimation?.()
+    }, 220)
+  }, [])
 
-  const handleTriage = useCallback(async (status: TriageStatus) => {
+  const goToPrevious = useCallback(() => {
+    if (currentIndex <= 0) return
+
+    animateCard('right', () => {
+      setCurrentIndex((index) => Math.max(0, index - 1))
+    })
+  }, [animateCard, currentIndex])
+
+  const goToNext = useCallback(() => {
+    if (filteredBookmarks.length === 0) return
+
+    animateCard('left', () => {
+      setCurrentIndex((index) => Math.min(index + 1, filteredBookmarks.length))
+    })
+  }, [animateCard, filteredBookmarks.length])
+
+  const handleReview = useCallback(async (status: TriageStatus) => {
     if (!currentBookmark) return
+
+    preferredBookmarkIdRef.current =
+      filteredBookmarks[currentIndex + 1]?.id ??
+      filteredBookmarks[currentIndex - 1]?.id ??
+      null
 
     await setTriageRecord(currentBookmark.id, status, noteInput || undefined)
     setTriageMap((prev) => ({ ...prev, [currentBookmark.id]: { status } }))
@@ -171,22 +226,21 @@ export function Discover() {
       await upsertBookmarkInsight(currentBookmark.id, { reason: noteInput.trim() })
     }
 
-    const dirMap: Record<TriageStatus, 'right' | 'left' | 'up' | 'down'> = {
-      keep: 'right',
-      skip: 'left',
-      archive: 'down',
-      delete: 'up',
-    }
-    animateAndAdvance(dirMap[status])
+    animateCard(status === 'keep' ? 'right' : 'up')
 
     if (status === 'delete') {
       try {
         await chrome.bookmarks.remove(currentBookmark.id)
+        setAllBookmarks((prev) => prev.filter((bookmark) => bookmark.id !== currentBookmark.id))
       } catch (err) {
         console.error('Delete failed:', err)
       }
     }
-  }, [currentBookmark, noteInput, animateAndAdvance])
+  }, [animateCard, currentBookmark, currentIndex, filteredBookmarks, noteInput])
+
+  const handleSkip = useCallback(() => {
+    goToNext()
+  }, [goToNext])
 
   const handleAddTag = useCallback(async () => {
     if (!currentBookmark || !tagInput.trim()) return
@@ -229,19 +283,15 @@ export function Discover() {
       switch (e.key) {
         case 'ArrowRight':
           e.preventDefault()
-          handleTriage('keep')
+          handleReview('keep')
           break
         case 'ArrowLeft':
           e.preventDefault()
-          handleTriage('skip')
-          break
-        case 'ArrowDown':
-          e.preventDefault()
-          handleTriage('archive')
+          handleSkip()
           break
         case 'ArrowUp':
           e.preventDefault()
-          handleTriage('delete')
+          handleReview('delete')
           break
         case 'n':
           e.preventDefault()
@@ -257,7 +307,7 @@ export function Discover() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleTriage, showNoteInput, editingFolderId, currentBookmark])
+  }, [handleReview, handleSkip, showNoteInput, editingFolderId, currentBookmark])
 
   if (loading) {
     return (
@@ -282,7 +332,7 @@ export function Discover() {
           <div>
             <h2 className="text-lg font-semibold">Discover</h2>
             <p className="text-sm text-gray-500 mt-0.5">
-              Swipe through your bookmarks. Keep what matters, archive the rest.
+              Review your bookmarks like flashcards. Keep what matters, skip for later, or delete the junk.
             </p>
           </div>
           <button
@@ -320,7 +370,11 @@ export function Discover() {
           ] as { key: FilterMode; label: string }[]).map((f) => (
             <button
               key={f.key}
-              onClick={() => setFilterMode(f.key)}
+              onClick={() => {
+                forceResetIndexRef.current = true
+                preferredBookmarkIdRef.current = null
+                setFilterMode(f.key)
+              }}
               className={cn(
                 'px-3 py-1 text-xs rounded-full transition-colors',
                 filterMode === f.key
@@ -359,6 +413,8 @@ export function Discover() {
                   <div key={folder.id} className="rounded-lg hover:bg-gray-800/50 transition-colors">
                     <button
                       onClick={() => {
+                        forceResetIndexRef.current = true
+                        preferredBookmarkIdRef.current = null
                         setSelectedFolder(folder.id === selectedFolder ? null : folder.id)
                       }}
                       className={cn(
@@ -505,7 +561,11 @@ export function Discover() {
                 You reviewed {filteredBookmarks.length} bookmark{filteredBookmarks.length !== 1 && 's'} in this session.
               </p>
               <button
-                onClick={() => setCurrentIndex(0)}
+                onClick={() => {
+                  forceResetIndexRef.current = true
+                  preferredBookmarkIdRef.current = null
+                  setCurrentIndex(0)
+                }}
                 className="mt-4 px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-colors"
               >
                 Start over
@@ -518,18 +578,20 @@ export function Discover() {
                 <span className="text-xs text-gray-600">
                   {currentIndex + 1} of {filteredBookmarks.length}
                 </span>
-                <div className="flex gap-1">
-                  {currentIndex > 0 && (
-                    <button
-                      onClick={() => {
-                        setCurrentIndex((i) => Math.max(0, i - 1))
-                        setShowNoteInput(false)
-                      }}
-                      className="text-xs text-gray-500 hover:text-gray-300 px-2 py-1 rounded hover:bg-gray-800 transition-colors"
-                    >
-                      Back
-                    </button>
-                  )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={goToPrevious}
+                    disabled={currentIndex === 0}
+                    className="text-xs text-gray-400 px-2.5 py-1 rounded border border-gray-800 hover:border-gray-700 hover:bg-gray-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={goToNext}
+                    className="text-xs text-gray-400 px-2.5 py-1 rounded border border-gray-800 hover:border-gray-700 hover:bg-gray-800 transition-colors"
+                  >
+                    Next
+                  </button>
                 </div>
               </div>
 
@@ -541,7 +603,6 @@ export function Discover() {
                   animDirection === 'right' && 'translate-x-full opacity-0',
                   animDirection === 'left' && '-translate-x-full opacity-0',
                   animDirection === 'up' && '-translate-y-full opacity-0',
-                  animDirection === 'down' && 'translate-y-full opacity-0',
                   !animDirection && 'translate-x-0 opacity-100'
                 )}
               >
@@ -681,7 +742,7 @@ export function Discover() {
                       icon={
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                       }
-                      onClick={() => handleTriage('delete')}
+                      onClick={() => handleReview('delete')}
                     />
                     <ActionButton
                       label="Skip"
@@ -690,7 +751,7 @@ export function Discover() {
                       icon={
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                       }
-                      onClick={() => handleTriage('skip')}
+                      onClick={handleSkip}
                     />
                     <button
                       onClick={() => setShowNoteInput(!showNoteInput)}
@@ -708,20 +769,11 @@ export function Discover() {
                       icon={
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       }
-                      onClick={() => handleTriage('keep')}
-                    />
-                    <ActionButton
-                      label="Archive"
-                      shortcut="down-arrow"
-                      color="yellow"
-                      icon={
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
-                      }
-                      onClick={() => handleTriage('archive')}
+                      onClick={() => handleReview('keep')}
                     />
                   </div>
                   <p className="text-center text-[10px] text-gray-600 mt-3">
-                    Use arrow keys or click. Press <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">N</kbd> for notes, <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">O</kbd> to open.
+                    Use Previous and Next to browse like flashcards. Arrow keys still work for Keep, Skip, and Delete. Press <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">N</kbd> for notes, <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">O</kbd> to open.
                   </p>
                 </div>
               </div>
@@ -742,20 +794,18 @@ function ActionButton({
 }: {
   label: string
   shortcut: string
-  color: 'red' | 'green' | 'yellow' | 'gray'
+  color: 'red' | 'green' | 'gray'
   icon: React.ReactNode
   onClick: () => void
 }) {
   const colorMap = {
     red: 'hover:border-red-500 hover:bg-red-900/20 group-hover:text-red-400',
     green: 'hover:border-emerald-500 hover:bg-emerald-900/20 group-hover:text-emerald-400',
-    yellow: 'hover:border-yellow-500 hover:bg-yellow-900/20 group-hover:text-yellow-400',
     gray: 'hover:border-gray-500 hover:bg-gray-700/30 group-hover:text-gray-300',
   }
   const iconColorMap = {
     red: 'group-hover:text-red-400',
     green: 'group-hover:text-emerald-400',
-    yellow: 'group-hover:text-yellow-400',
     gray: 'group-hover:text-gray-300',
   }
 

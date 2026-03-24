@@ -11,6 +11,13 @@ export interface OpenAIModelOption {
   description: string
 }
 
+// Curated from the current OpenAI API model docs.
+// Keep this list focused on relevant text models for the bookmark Command workflow:
+// https://platform.openai.com/docs/models/model-endpoint-compatibility
+// https://developers.openai.com/api/docs/models/gpt-5.4
+// https://developers.openai.com/api/docs/models/gpt-5.4-mini
+// https://developers.openai.com/api/docs/models/gpt-5.4-nano
+// https://developers.openai.com/api/docs/models/gpt-4.1
 export const OPENAI_MODELS = [
   {
     id: 'gpt-5.4-mini',
@@ -197,7 +204,7 @@ export async function queryAI(
       model: selectedModel,
       messages,
       temperature: 0.1,
-      max_tokens: 4096,
+      max_completion_tokens: 4096,
     }),
   })
 

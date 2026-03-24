@@ -21,13 +21,13 @@ const navItems = [
   },
   {
     id: 'command',
-    label: 'Command',
+    label: 'AI Chat',
     icon: (
       <path
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth={1.5}
-        d="M13 10V3L4 14h7v7l9-11h-7z"
+        d="M9.5 4.5a3.5 3.5 0 00-3.5 3.5v.5a3 3 0 00-2 2.828V13a3 3 0 003 3h.25a2.75 2.75 0 002.5 2h.5A2.75 2.75 0 0013 16h.5a2.5 2.5 0 002.5-2.5V13h.25a3 3 0 003-3v-1.672A3 3 0 0017 5.5V5a3.5 3.5 0 00-6.362-2.044A3.48 3.48 0 009.5 4.5zm-1 4.25h.5m6.5 0h.5M9 12.5h1m4 0h1M12 4v10"
       />
     ),
   },

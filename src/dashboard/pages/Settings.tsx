@@ -144,7 +144,7 @@ export function Settings() {
                   ))}
                 </select>
                 <p className="text-xs text-gray-600 mt-1.5">
-                  Curated current OpenAI API text models for this workflow. Also changeable from the Command tab header.
+                  Curated current OpenAI API text models for this workflow. Also changeable from the AI Chat header.
                 </p>
               </div>
             </div>

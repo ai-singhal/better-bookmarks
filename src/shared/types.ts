@@ -79,7 +79,7 @@ export interface FolderDescription {
   updatedAt: string
 }
 
-export type TriageStatus = 'keep' | 'archive' | 'skip' | 'delete'
+export type TriageStatus = 'keep' | 'delete'
 
 export interface TriageRecord {
   bookmarkId: string
