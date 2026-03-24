@@ -44,6 +44,18 @@ const navItems = [
     ),
   },
   {
+    id: 'organization',
+    label: 'Organize',
+    icon: (
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.5}
+        d="M4 6h16M4 12h10M4 18h7m11 0h.01M18 12h.01M22 6h.01"
+      />
+    ),
+  },
+  {
     id: 'reminders',
     label: 'Reminders',
     icon: (

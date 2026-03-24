@@ -5,6 +5,7 @@
   "description": "Smart bookmark organization, semantic search, and reminders",
   "permissions": [
     "bookmarks",
+    "history",
     "storage",
     "alarms",
     "notifications",

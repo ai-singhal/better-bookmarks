@@ -1,199 +1,156 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { createBookmark } from '../../shared/chromeApi'
+import { cn, formatRelativeDate, getFaviconUrl, truncateUrl } from '../../shared/utils'
+import {
+  analyzeOrganization,
+  type BookmarkMoveSuggestion,
+  type DuplicateBookmarkInfo,
+  type EmptyFolderInfo,
+  type HistoryBookmarkSuggestion,
+  type ReorganizationRecommendation,
+} from '../../lib/organizationAnalysis'
+import { type BookmarkCluster } from '../../lib/localSearchEngine'
 import type { BookmarkWithMetadata } from '../../shared/types'
-import { flattenBookmarks, getBookmarkTree } from '../../shared/chromeApi'
-import { cn, getDomain, getFaviconUrl } from '../../shared/utils'
-import { clusterBookmarks, ensureIndex, type BookmarkCluster } from '../../lib/localSearchEngine'
 import { FolderPicker } from '../components/FolderPicker'
 
-interface LocalSuggestion {
-  id: string
-  bookmark: BookmarkWithMetadata
-  currentFolderPath: string
-  currentFolderId: string
-  suggestedFolderPath: string
-  suggestedFolderId: string
-  reason: string
-  confidence: number
-}
+const TIMEFRAME_OPTIONS = [
+  { value: 7, label: '7 days' },
+  { value: 30, label: '30 days' },
+  { value: 90, label: '90 days' },
+  { value: 365, label: '1 year' },
+]
 
-interface FolderInfo {
-  id: string
-  title: string
-  path: string
-  bookmarks: BookmarkWithMetadata[]
-  domains: Map<string, number>
+const ORGANIZATION_ANALYSIS_CACHE_KEY = 'organization_analysis_cache_v1'
+
+interface StoredOrganizationAnalysis {
+  version: 1
+  timeframeDays: number
+  lastAnalyzedAt: number
+  historySitesAnalyzed: number
+  totalBookmarks: number
+  clusters: BookmarkCluster[]
+  clusterBookmarkEntries: Array<[string, BookmarkWithMetadata]>
+  moveSuggestions: BookmarkMoveSuggestion[]
+  historySuggestions: HistoryBookmarkSuggestion[]
+  recommendations: ReorganizationRecommendation[]
+  emptyFolders: EmptyFolderInfo[]
+  duplicates: DuplicateBookmarkInfo[]
 }
 
 export function Organization() {
-  const [suggestions, setSuggestions] = useState<LocalSuggestion[]>([])
-  const [clusters, setClusters] = useState<BookmarkCluster[]>([])
-  const [clusterBookmarkMap, setClusterBookmarkMap] = useState<Map<string, BookmarkWithMetadata>>(new Map())
+  const [timeframeDays, setTimeframeDays] = useState(30)
+  const [analysisTimeframeDays, setAnalysisTimeframeDays] = useState<number | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [hasAnalyzed, setHasAnalyzed] = useState(false)
-  const [movingId, setMovingId] = useState<string | null>(null)
-  const [customMoveTarget, setCustomMoveTarget] = useState<LocalSuggestion | null>(null)
-  const [emptyFolders, setEmptyFolders] = useState<{ id: string; path: string }[]>([])
-  const [duplicates, setDuplicates] = useState<{ url: string; title: string; folders: string[] }[]>([])
+  const [cacheHydrated, setCacheHydrated] = useState(false)
+  const [lastAnalyzedAt, setLastAnalyzedAt] = useState<number | null>(null)
+  const [workingId, setWorkingId] = useState<string | null>(null)
+  const [historySitesAnalyzed, setHistorySitesAnalyzed] = useState(0)
+  const [totalBookmarks, setTotalBookmarks] = useState(0)
+  const [clusters, setClusters] = useState<BookmarkCluster[]>([])
+  const [clusterBookmarkMap, setClusterBookmarkMap] = useState<Map<string, BookmarkWithMetadata>>(new Map())
+  const [moveSuggestions, setMoveSuggestions] = useState<BookmarkMoveSuggestion[]>([])
+  const [historySuggestions, setHistorySuggestions] = useState<HistoryBookmarkSuggestion[]>([])
+  const [recommendations, setRecommendations] = useState<ReorganizationRecommendation[]>([])
+  const [emptyFolders, setEmptyFolders] = useState<EmptyFolderInfo[]>([])
+  const [duplicates, setDuplicates] = useState<DuplicateBookmarkInfo[]>([])
+  const [customMoveTarget, setCustomMoveTarget] = useState<BookmarkMoveSuggestion | null>(null)
+  const [customHistoryTarget, setCustomHistoryTarget] = useState<HistoryBookmarkSuggestion | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    chrome.storage.local.get(ORGANIZATION_ANALYSIS_CACHE_KEY)
+      .then((data) => {
+        if (cancelled) return
+
+        const cached = data[ORGANIZATION_ANALYSIS_CACHE_KEY] as StoredOrganizationAnalysis | undefined
+        if (!cached || cached.version !== 1) return
+
+        setTimeframeDays(cached.timeframeDays)
+        setAnalysisTimeframeDays(cached.timeframeDays)
+        setLastAnalyzedAt(cached.lastAnalyzedAt)
+        setHistorySitesAnalyzed(cached.historySitesAnalyzed)
+        setTotalBookmarks(cached.totalBookmarks)
+        setClusters(cached.clusters || [])
+        setClusterBookmarkMap(new Map(cached.clusterBookmarkEntries || []))
+        setMoveSuggestions(cached.moveSuggestions || [])
+        setHistorySuggestions(cached.historySuggestions || [])
+        setRecommendations(cached.recommendations || [])
+        setEmptyFolders(cached.emptyFolders || [])
+        setDuplicates(cached.duplicates || [])
+        setHasAnalyzed(true)
+      })
+      .catch((err) => {
+        console.error('Failed to restore organization analysis cache:', err)
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCacheHydrated(true)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!cacheHydrated || !hasAnalyzed || isAnalyzing || analysisTimeframeDays === null) return
+
+    const payload: StoredOrganizationAnalysis = {
+      version: 1,
+      timeframeDays: analysisTimeframeDays,
+      lastAnalyzedAt: lastAnalyzedAt || Date.now(),
+      historySitesAnalyzed,
+      totalBookmarks,
+      clusters,
+      clusterBookmarkEntries: Array.from(clusterBookmarkMap.entries()),
+      moveSuggestions,
+      historySuggestions,
+      recommendations,
+      emptyFolders,
+      duplicates,
+    }
+
+    chrome.storage.local.set({
+      [ORGANIZATION_ANALYSIS_CACHE_KEY]: payload,
+    }).catch((err) => {
+      console.error('Failed to persist organization analysis cache:', err)
+    })
+  }, [
+    analysisTimeframeDays,
+    cacheHydrated,
+    clusterBookmarkMap,
+    clusters,
+    duplicates,
+    emptyFolders,
+    hasAnalyzed,
+    historySitesAnalyzed,
+    historySuggestions,
+    isAnalyzing,
+    lastAnalyzedAt,
+    moveSuggestions,
+    recommendations,
+    totalBookmarks,
+  ])
 
   const handleAnalyze = async () => {
     setIsAnalyzing(true)
     setHasAnalyzed(true)
     try {
-      const tree = await getBookmarkTree()
-      const flatBookmarks = flattenBookmarks(tree)
-      setClusterBookmarkMap(new Map(flatBookmarks.map((bookmark) => [bookmark.id, bookmark])))
-      await ensureIndex(flatBookmarks)
-      setClusters(clusterBookmarks().filter((cluster) => cluster.size > 1).slice(0, 12))
-
-      const folderMap = new Map<string, FolderInfo>()
-      const allBookmarks: Array<{ bookmark: BookmarkWithMetadata; folderId: string; folderPath: string }> = []
-      const urlMap = new Map<string, { title: string; folders: string[] }>()
-      const emptyList: { id: string; path: string }[] = []
-
-      // Walk the tree and collect folder info
-      function walkTree(nodes: BookmarkWithMetadata[], path: string) {
-        for (const node of nodes) {
-          if (!node.url && node.children !== undefined) {
-            const folderPath = path ? `${path} / ${node.title}` : node.title
-            const info: FolderInfo = {
-              id: node.id,
-              title: node.title,
-              path: folderPath,
-              bookmarks: [],
-              domains: new Map(),
-            }
-
-            // Collect bookmarks in this folder
-            for (const child of node.children) {
-              if (child.url) {
-                info.bookmarks.push(child)
-                const domain = getDomain(child.url)
-                info.domains.set(domain, (info.domains.get(domain) || 0) + 1)
-                allBookmarks.push({ bookmark: child, folderId: node.id, folderPath })
-
-                // Track duplicates
-                if (urlMap.has(child.url)) {
-                  urlMap.get(child.url)!.folders.push(folderPath)
-                } else {
-                  urlMap.set(child.url, { title: child.title, folders: [folderPath] })
-                }
-              }
-            }
-
-            folderMap.set(node.id, info)
-
-            if (node.children.length === 0) {
-              emptyList.push({ id: node.id, path: folderPath })
-            }
-
-            walkTree(node.children, folderPath)
-          }
-        }
-      }
-
-      walkTree(tree[0]?.children || [], '')
-
-      // Find suggestions
-      const newSuggestions: LocalSuggestion[] = []
-      let suggestionId = 0
-
-      // Strategy 1: Find bookmarks whose domain is dominant in another folder
-      for (const { bookmark, folderId, folderPath } of allBookmarks) {
-        if (!bookmark.url) continue
-        const domain = getDomain(bookmark.url)
-        const currentFolder = folderMap.get(folderId)
-        if (!currentFolder) continue
-
-        // How many bookmarks in this folder share the same domain?
-        const domainCountInCurrent = currentFolder.domains.get(domain) || 0
-        const totalInCurrent = currentFolder.bookmarks.length
-
-        // Check other folders for better domain fit
-        let bestFolder: FolderInfo | null = null
-        let bestDomainRatio = 0
-
-        for (const [otherId, otherFolder] of folderMap) {
-          if (otherId === folderId) continue
-          const otherDomainCount = otherFolder.domains.get(domain) || 0
-          if (otherDomainCount === 0) continue
-          const otherRatio = otherDomainCount / otherFolder.bookmarks.length
-
-          if (otherRatio > bestDomainRatio && otherDomainCount >= 2) {
-            bestDomainRatio = otherRatio
-            bestFolder = otherFolder
-          }
-        }
-
-        // Only suggest if this bookmark's domain is rare in current folder but common in another
-        const currentRatio = domainCountInCurrent / totalInCurrent
-        if (bestFolder && bestDomainRatio > 0.3 && currentRatio < 0.2 && domainCountInCurrent <= 1) {
-          newSuggestions.push({
-            id: String(suggestionId++),
-            bookmark,
-            currentFolderPath: folderPath,
-            currentFolderId: folderId,
-            suggestedFolderPath: bestFolder.path,
-            suggestedFolderId: bestFolder.id,
-            reason: `This ${domain} link is the only one in "${currentFolder.title}", but "${bestFolder.title}" already has ${bestFolder.domains.get(domain)} links from ${domain}`,
-            confidence: Math.min(bestDomainRatio, 0.95),
-          })
-        }
-      }
-
-      // Strategy 2: Find bookmarks whose title/domain matches another folder's name
-      for (const { bookmark, folderId, folderPath } of allBookmarks) {
-        if (!bookmark.url) continue
-        // Already suggested?
-        if (newSuggestions.some((s) => s.bookmark.id === bookmark.id)) continue
-
-        const domain = getDomain(bookmark.url).replace('www.', '').split('.')[0].toLowerCase()
-        const titleLower = bookmark.title.toLowerCase()
-
-        for (const [otherId, otherFolder] of folderMap) {
-          if (otherId === folderId) continue
-          const folderNameLower = otherFolder.title.toLowerCase()
-          if (!folderNameLower) continue
-
-          // Check if domain or title strongly matches another folder name
-          const domainMatchesFolder = folderNameLower.includes(domain) || domain.includes(folderNameLower)
-          const titleMatchesFolder =
-            folderNameLower.length > 3 &&
-            (titleLower.includes(folderNameLower) || folderNameLower.includes(titleLower.slice(0, 15)))
-
-          if ((domainMatchesFolder || titleMatchesFolder) && folderNameLower !== getDomain(bookmark.url)) {
-            const currentFolder = folderMap.get(folderId)
-            const currentFolderName = currentFolder?.title.toLowerCase() || ''
-            // Don't suggest if the current folder also matches
-            if (currentFolderName.includes(domain) || domain.includes(currentFolderName)) continue
-
-            newSuggestions.push({
-              id: String(suggestionId++),
-              bookmark,
-              currentFolderPath: folderPath,
-              currentFolderId: folderId,
-              suggestedFolderPath: otherFolder.path,
-              suggestedFolderId: otherFolder.id,
-              reason: domainMatchesFolder
-                ? `"${domain}" matches the folder "${otherFolder.title}"`
-                : `Bookmark title matches the folder "${otherFolder.title}"`,
-              confidence: domainMatchesFolder ? 0.7 : 0.5,
-            })
-            break
-          }
-        }
-      }
-
-      // Find duplicates
-      const dupes = [...urlMap.entries()]
-        .filter(([, info]) => info.folders.length > 1)
-        .map(([url, info]) => ({ url, title: info.title, folders: info.folders }))
-
-      // Sort suggestions by confidence
-      newSuggestions.sort((a, b) => b.confidence - a.confidence)
-
-      setSuggestions(newSuggestions.slice(0, 50))
-      setEmptyFolders(emptyList)
-      setDuplicates(dupes)
+      const result = await analyzeOrganization(timeframeDays)
+      setAnalysisTimeframeDays(result.timeframeDays)
+      setLastAnalyzedAt(Date.now())
+      setHistorySitesAnalyzed(result.historySitesAnalyzed)
+      setTotalBookmarks(result.totalBookmarks)
+      setClusters(result.clusters)
+      setClusterBookmarkMap(result.clusterBookmarkMap)
+      setMoveSuggestions(result.moveSuggestions)
+      setHistorySuggestions(result.historySuggestions)
+      setRecommendations(result.recommendations)
+      setEmptyFolders(result.emptyFolders)
+      setDuplicates(result.duplicates)
     } catch (err) {
       console.error('Analysis failed:', err)
     } finally {
@@ -201,115 +158,381 @@ export function Organization() {
     }
   }
 
-  const handleAccept = async (suggestion: LocalSuggestion) => {
-    setMovingId(suggestion.id)
+  const handleAcceptMove = async (suggestion: BookmarkMoveSuggestion, targetFolderId = suggestion.suggestedFolderId) => {
+    setWorkingId(suggestion.id)
     try {
-      await chrome.bookmarks.move(suggestion.bookmark.id, { parentId: suggestion.suggestedFolderId })
-      setSuggestions((prev) => prev.filter((s) => s.id !== suggestion.id))
+      await chrome.bookmarks.move(suggestion.bookmark.id, { parentId: targetFolderId })
+      setMoveSuggestions((prev) => prev.filter((item) => item.id !== suggestion.id))
     } catch (err) {
       console.error('Move failed:', err)
     } finally {
-      setMovingId(null)
+      setWorkingId(null)
+      setCustomMoveTarget(null)
     }
   }
 
-  const handleDismiss = (id: string) => {
-    setSuggestions((prev) => prev.filter((s) => s.id !== id))
+  const handleBookmarkHistorySuggestion = async (
+    suggestion: HistoryBookmarkSuggestion,
+    folderId = suggestion.suggestedFolderId
+  ) => {
+    if (!folderId) return
+
+    setWorkingId(suggestion.id)
+    try {
+      await createBookmark({
+        parentId: folderId,
+        title: suggestion.title || suggestion.domain,
+        url: suggestion.url,
+      })
+      setHistorySuggestions((prev) => prev.filter((item) => item.id !== suggestion.id))
+    } catch (err) {
+      console.error('Bookmark create failed:', err)
+    } finally {
+      setWorkingId(null)
+      setCustomHistoryTarget(null)
+    }
+  }
+
+  const handleDismissMove = (id: string) => {
+    setMoveSuggestions((prev) => prev.filter((item) => item.id !== id))
+  }
+
+  const handleDismissHistory = (id: string) => {
+    setHistorySuggestions((prev) => prev.filter((item) => item.id !== id))
   }
 
   const handleDeleteEmptyFolder = async (folderId: string) => {
     try {
       await chrome.bookmarks.removeTree(folderId)
-      setEmptyFolders((prev) => prev.filter((f) => f.id !== folderId))
+      setEmptyFolders((prev) => prev.filter((folder) => folder.id !== folderId))
+      setRecommendations((prev) => prev.filter((recommendation) => recommendation.folderId !== folderId))
     } catch (err) {
       console.error('Delete folder failed:', err)
     }
   }
 
-  const handleCustomMove = async (suggestion: LocalSuggestion, targetFolderId: string) => {
-    setMovingId(suggestion.id)
-    try {
-      await chrome.bookmarks.move(suggestion.bookmark.id, { parentId: targetFolderId })
-      setSuggestions((prev) => prev.filter((s) => s.id !== suggestion.id))
-    } catch (err) {
-      console.error('Move failed:', err)
-    } finally {
-      setMovingId(null)
-      setCustomMoveTarget(null)
-    }
+  const recommendationTypeStyles: Record<ReorganizationRecommendation['type'], string> = {
+    'rename-folder': 'bg-indigo-500/10 text-indigo-300 border border-indigo-500/20',
+    'reorder-folder': 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20',
+    'create-folder': 'bg-sky-500/10 text-sky-300 border border-sky-500/20',
+    'delete-folder': 'bg-red-500/10 text-red-300 border border-red-500/20',
   }
 
   return (
     <div className="h-full flex flex-col">
-      {/* Header */}
       <div className="px-6 py-5 border-b border-gray-800">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h2 className="text-lg font-semibold">Organize</h2>
             <p className="text-sm text-gray-500 mt-0.5">
-              Find misplaced bookmarks, duplicates, and empty folders
+              Match your bookmarks against recent browsing history and get a concrete cleanup plan.
             </p>
           </div>
-          <button
-            onClick={handleAnalyze}
-            disabled={isAnalyzing}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm font-medium rounded-lg transition-colors"
-          >
-            {isAnalyzing ? (
-              <span className="flex items-center gap-2">
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Analyzing...
-              </span>
-            ) : hasAnalyzed ? (
-              'Re-analyze'
-            ) : (
-              'Analyze Bookmarks'
-            )}
-          </button>
+
+          <div className="flex items-center gap-3">
+            <div>
+              <label className="block text-[11px] uppercase tracking-wider text-gray-600 mb-1">
+                History window
+              </label>
+              <select
+                value={timeframeDays}
+                onChange={(e) => setTimeframeDays(Number(e.target.value))}
+                className="px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 focus:outline-none focus:border-indigo-500"
+              >
+                {TIMEFRAME_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              onClick={handleAnalyze}
+              disabled={isAnalyzing}
+              className="self-end px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              {isAnalyzing ? (
+                <span className="flex items-center gap-2">
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Analyzing...
+                </span>
+              ) : hasAnalyzed ? (
+                'Re-analyze'
+              ) : (
+                'Analyze Structure'
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Content */}
       <div className="flex-1 overflow-y-auto px-6 py-4">
         {!hasAnalyzed ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <svg className="w-16 h-16 text-gray-700 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 6h16M4 12h16M4 18h10m6 0h.01M20 12h.01M20 6h.01" />
             </svg>
-            <p className="text-gray-500 text-sm">Click "Analyze Bookmarks" to find organization issues</p>
+            <p className="text-gray-400 text-sm">
+              Analyze your bookmarks against Chrome history to surface high-signal suggestions.
+            </p>
             <p className="text-gray-600 text-xs mt-1">
-              Detects misplaced bookmarks, duplicate URLs, and empty folders
+              This looks at frequent sites, folder fit, duplicate links, empty folders, and folder structure.
             </p>
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Summary */}
-            {hasAnalyzed && !isAnalyzing && (
-              <div className="flex gap-3">
-                <div className="flex-1 p-3 rounded-lg bg-gray-900/50 border border-gray-800 text-center">
-                  <p className="text-2xl font-semibold text-indigo-400">{suggestions.length}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">Misplaced</p>
+            {!isAnalyzing && (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                  <SummaryCard value={historySuggestions.length} label="History Suggestions" tone="sky" />
+                  <SummaryCard value={recommendations.length} label="Structure Changes" tone="indigo" />
+                  <SummaryCard value={moveSuggestions.length} label="Bookmark Moves" tone="emerald" />
+                  <SummaryCard value={duplicates.length} label="Duplicates" tone="amber" />
+                  <SummaryCard value={emptyFolders.length} label="Empty Folders" tone="gray" />
                 </div>
-                <div className="flex-1 p-3 rounded-lg bg-gray-900/50 border border-gray-800 text-center">
-                  <p className="text-2xl font-semibold text-emerald-400">{clusters.length}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">AI Clusters</p>
+
+                <div className="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-3 flex flex-wrap items-center gap-4 text-xs text-gray-500">
+                  <span>{totalBookmarks} bookmarks analyzed</span>
+                  <span>{historySitesAnalyzed} history sites scanned</span>
+                  <span>window: last {analysisTimeframeDays ?? timeframeDays} days</span>
+                  {lastAnalyzedAt && <span>saved {formatRelativeDate(lastAnalyzedAt)}</span>}
                 </div>
-                <div className="flex-1 p-3 rounded-lg bg-gray-900/50 border border-gray-800 text-center">
-                  <p className="text-2xl font-semibold text-amber-400">{duplicates.length}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">Duplicates</p>
-                </div>
-                <div className="flex-1 p-3 rounded-lg bg-gray-900/50 border border-gray-800 text-center">
-                  <p className="text-2xl font-semibold text-gray-400">{emptyFolders.length}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">Empty Folders</p>
-                </div>
-              </div>
+              </>
             )}
 
-            {/* AI Clusters */}
+            {historySuggestions.length > 0 && (
+              <section>
+                <h3 className="text-sm font-medium text-gray-300 mb-3">
+                  Suggested Bookmarks From History
+                  <span className="text-xs text-gray-500 font-normal ml-2">
+                    ({historySuggestions.length})
+                  </span>
+                </h3>
+
+                <div className="space-y-2">
+                  {historySuggestions.map((suggestion) => (
+                    <div key={suggestion.id} className="p-4 rounded-lg bg-gray-900/50 border border-gray-800">
+                      <div className="flex items-start gap-3">
+                        <img
+                          src={getFaviconUrl(suggestion.url)}
+                          alt=""
+                          className="w-5 h-5 rounded flex-shrink-0 mt-0.5"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                        />
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-medium text-gray-200 truncate">
+                              {suggestion.title || suggestion.domain}
+                            </p>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-500/10 text-sky-300 border border-sky-500/20">
+                              {suggestion.visitCount} visits
+                            </span>
+                          </div>
+
+                          <a
+                            href={suggestion.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs text-gray-500 hover:text-indigo-400 transition-colors mt-1 block truncate"
+                          >
+                            {truncateUrl(suggestion.url, 70)}
+                          </a>
+
+                          <p className="text-xs text-gray-500 mt-1.5">{suggestion.reason}</p>
+
+                          <div className="flex flex-wrap items-center gap-2 mt-2">
+                            <span className="text-[10px] text-gray-600">
+                              last visited {formatRelativeDate(suggestion.lastVisitTime)}
+                            </span>
+                            {suggestion.suggestedFolderPath ? (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+                                suggested folder: {suggestion.suggestedFolderPath}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400">
+                                no clear folder match yet
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <button
+                            onClick={() => {
+                              chrome.tabs.create({ url: suggestion.url })
+                            }}
+                            className="px-2.5 py-1 text-xs text-gray-400 hover:text-gray-200 border border-gray-700 rounded-md hover:bg-gray-800 transition-colors"
+                          >
+                            Open
+                          </button>
+                          {suggestion.suggestedFolderId && (
+                            <button
+                              onClick={() => handleBookmarkHistorySuggestion(suggestion)}
+                              disabled={workingId === suggestion.id}
+                              className="px-2.5 py-1 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 text-white rounded-md transition-colors"
+                            >
+                              {workingId === suggestion.id ? '...' : 'Bookmark'}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => setCustomHistoryTarget(suggestion)}
+                            className="px-2.5 py-1 text-xs text-gray-400 hover:text-gray-200 border border-gray-700 rounded-md hover:bg-gray-800 transition-colors"
+                          >
+                            {suggestion.suggestedFolderId ? 'Other' : 'Choose folder'}
+                          </button>
+                          <button
+                            onClick={() => handleDismissHistory(suggestion.id)}
+                            className="p-1 text-gray-500 hover:text-gray-300 transition-colors"
+                            title="Dismiss"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {recommendations.length > 0 && (
+              <section>
+                <h3 className="text-sm font-medium text-gray-300 mb-3">
+                  Reorganization Plan
+                  <span className="text-xs text-gray-500 font-normal ml-2">
+                    ({recommendations.length})
+                  </span>
+                </h3>
+
+                <div className="space-y-2">
+                  {recommendations.map((recommendation) => (
+                    <div key={recommendation.id} className="p-4 rounded-lg bg-gray-900/50 border border-gray-800">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-medium text-gray-200">{recommendation.title}</p>
+                            <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full', recommendationTypeStyles[recommendation.type])}>
+                              {recommendation.type.replace('-', ' ')}
+                            </span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400">
+                              {Math.round(recommendation.confidence * 100)}%
+                            </span>
+                          </div>
+
+                          <p className="text-xs text-gray-500 mt-1.5">{recommendation.description}</p>
+
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {recommendation.folderPath && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400">
+                                {recommendation.folderPath}
+                              </span>
+                            )}
+                            {recommendation.suggestedName && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+                                suggested name: {recommendation.suggestedName}
+                              </span>
+                            )}
+                            {recommendation.historyVisitCount ? (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-500/10 text-sky-300 border border-sky-500/20">
+                                {recommendation.historyVisitCount} history signals
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        {recommendation.type === 'delete-folder' && recommendation.folderId && (
+                          <button
+                            onClick={() => handleDeleteEmptyFolder(recommendation.folderId!)}
+                            className="px-2.5 py-1 text-xs text-red-300 hover:text-red-200 border border-red-900/40 rounded-md hover:bg-red-900/20 transition-colors"
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {moveSuggestions.length > 0 && (
+              <section>
+                <h3 className="text-sm font-medium text-gray-300 mb-3">
+                  Bookmark Moves
+                  <span className="text-xs text-gray-500 font-normal ml-2">
+                    ({moveSuggestions.length})
+                  </span>
+                </h3>
+
+                <div className="space-y-2">
+                  {moveSuggestions.map((suggestion) => (
+                    <div key={suggestion.id} className="p-4 rounded-lg bg-gray-900/50 border border-gray-800">
+                      <div className="flex items-start gap-3">
+                        <img
+                          src={suggestion.bookmark.url ? getFaviconUrl(suggestion.bookmark.url) : ''}
+                          alt=""
+                          className="w-5 h-5 rounded flex-shrink-0 mt-0.5"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                        />
+
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-200 truncate">
+                            {suggestion.bookmark.title || 'Untitled'}
+                          </p>
+                          <div className="flex items-center gap-1 mt-1 text-xs">
+                            <span className="text-gray-500 truncate max-w-[150px]">{suggestion.currentFolderPath}</span>
+                            <svg className="w-3 h-3 text-gray-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                            </svg>
+                            <span className="text-indigo-400 truncate max-w-[150px]">{suggestion.suggestedFolderPath}</span>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">{suggestion.reason}</p>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          {suggestion.historyVisitCount > 0 && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-500/10 text-sky-300 border border-sky-500/20">
+                              {suggestion.historyVisitCount} visits
+                            </span>
+                          )}
+                          <button
+                            onClick={() => handleAcceptMove(suggestion)}
+                            disabled={workingId === suggestion.id}
+                            className="px-2.5 py-1 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 text-white rounded-md transition-colors"
+                          >
+                            {workingId === suggestion.id ? '...' : 'Move'}
+                          </button>
+                          <button
+                            onClick={() => setCustomMoveTarget(suggestion)}
+                            className="px-2.5 py-1 text-xs text-gray-400 hover:text-gray-200 border border-gray-700 rounded-md hover:bg-gray-800 transition-colors"
+                          >
+                            Other
+                          </button>
+                          <button
+                            onClick={() => handleDismissMove(suggestion.id)}
+                            className="p-1 text-gray-500 hover:text-gray-300 transition-colors"
+                            title="Dismiss"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
             {clusters.length > 0 && (
               <section>
                 <h3 className="text-sm font-medium text-gray-300 mb-3">
-                  AI Topic Clusters
+                  Topic Clusters
                   <span className="text-xs text-gray-500 font-normal ml-2">
                     ({clusters.length})
                   </span>
@@ -322,15 +545,12 @@ export function Organization() {
                       .slice(0, 4)
 
                     return (
-                      <div
-                        key={cluster.id}
-                        className="p-4 rounded-lg bg-gray-900/50 border border-gray-800"
-                      >
+                      <div key={cluster.id} className="p-4 rounded-lg bg-gray-900/50 border border-gray-800">
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <p className="text-sm font-medium text-gray-200">{cluster.label}</p>
                             <p className="text-xs text-gray-500 mt-1">
-                              {cluster.size} related bookmarks inferred from page vectors
+                              {cluster.size} related bookmarks inferred from local content and tags
                             </p>
                           </div>
                           <div className="flex flex-wrap justify-end gap-1.5">
@@ -346,10 +566,7 @@ export function Organization() {
                         </div>
                         <div className="mt-3 space-y-1.5">
                           {sampleBookmarks.map((bookmark) => (
-                            <div
-                              key={bookmark.id}
-                              className="flex items-center gap-2 text-xs text-gray-400"
-                            >
+                            <div key={bookmark.id} className="flex items-center gap-2 text-xs text-gray-400">
                               <img
                                 src={bookmark.url ? getFaviconUrl(bookmark.url) : ''}
                                 alt=""
@@ -369,80 +586,6 @@ export function Organization() {
               </section>
             )}
 
-            {/* Misplaced Bookmarks */}
-            {suggestions.length > 0 && (
-              <section>
-                <h3 className="text-sm font-medium text-gray-300 mb-3">
-                  Misplaced Bookmarks
-                  <span className="text-xs text-gray-500 font-normal ml-2">
-                    ({suggestions.length})
-                  </span>
-                </h3>
-                <div className="space-y-2">
-                  {suggestions.map((suggestion) => (
-                    <div
-                      key={suggestion.id}
-                      className="p-4 rounded-lg bg-gray-900/50 border border-gray-800"
-                    >
-                      <div className="flex items-start gap-3">
-                        <img
-                          src={suggestion.bookmark.url ? getFaviconUrl(suggestion.bookmark.url) : ''}
-                          alt=""
-                          className="w-5 h-5 rounded flex-shrink-0 mt-0.5"
-                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                        />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-200 truncate">
-                            {suggestion.bookmark.title || 'Untitled'}
-                          </p>
-                          <div className="flex items-center gap-1 mt-1 text-xs">
-                            <span className="text-gray-500 truncate max-w-[150px]">{suggestion.currentFolderPath}</span>
-                            <svg className="w-3 h-3 text-gray-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                            </svg>
-                            <span className="text-indigo-400 truncate max-w-[150px]">{suggestion.suggestedFolderPath}</span>
-                          </div>
-                          <p className="text-xs text-gray-500 mt-1">{suggestion.reason}</p>
-                        </div>
-                        <div className="flex items-center gap-1.5 flex-shrink-0">
-                          <span className={cn(
-                            'text-[10px] px-1.5 py-0.5 rounded-full',
-                            suggestion.confidence > 0.7 ? 'bg-green-500/10 text-green-400' : 'bg-amber-500/10 text-amber-400'
-                          )}>
-                            {Math.round(suggestion.confidence * 100)}%
-                          </span>
-                          <button
-                            onClick={() => handleAccept(suggestion)}
-                            disabled={movingId === suggestion.id}
-                            className="px-2.5 py-1 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 text-white rounded-md transition-colors"
-                          >
-                            {movingId === suggestion.id ? '...' : 'Move'}
-                          </button>
-                          <button
-                            onClick={() => setCustomMoveTarget(suggestion)}
-                            className="px-2.5 py-1 text-xs text-gray-400 hover:text-gray-200 border border-gray-700 rounded-md hover:bg-gray-800 transition-colors"
-                            title="Choose a different folder"
-                          >
-                            Other
-                          </button>
-                          <button
-                            onClick={() => handleDismiss(suggestion.id)}
-                            className="p-1 text-gray-500 hover:text-gray-300 transition-colors"
-                            title="Dismiss"
-                          >
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {/* Duplicates */}
             {duplicates.length > 0 && (
               <section>
                 <h3 className="text-sm font-medium text-gray-300 mb-3">
@@ -452,12 +595,12 @@ export function Organization() {
                   </span>
                 </h3>
                 <div className="space-y-2">
-                  {duplicates.slice(0, 20).map((dupe, i) => (
-                    <div key={i} className="p-3 rounded-lg bg-gray-900/50 border border-amber-900/30">
+                  {duplicates.slice(0, 20).map((dupe, index) => (
+                    <div key={index} className="p-3 rounded-lg bg-gray-900/50 border border-amber-900/30">
                       <p className="text-sm text-gray-200 truncate">{dupe.title || dupe.url}</p>
                       <div className="flex flex-wrap gap-1.5 mt-1.5">
-                        {dupe.folders.map((folder, j) => (
-                          <span key={j} className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400/80">
+                        {dupe.folders.map((folder, folderIndex) => (
+                          <span key={folderIndex} className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400/80">
                             {folder}
                           </span>
                         ))}
@@ -468,7 +611,6 @@ export function Organization() {
               </section>
             )}
 
-            {/* Empty Folders */}
             {emptyFolders.length > 0 && (
               <section>
                 <h3 className="text-sm font-medium text-gray-300 mb-3">
@@ -498,25 +640,62 @@ export function Organization() {
               </section>
             )}
 
-            {/* All clean */}
-            {suggestions.length === 0 && duplicates.length === 0 && emptyFolders.length === 0 && !isAnalyzing && (
-              <div className="text-center py-12">
-                <p className="text-lg text-gray-300">Your bookmarks look well organized!</p>
-                <p className="text-sm text-gray-500 mt-1">No misplaced bookmarks, duplicates, or empty folders found.</p>
-              </div>
-            )}
+            {historySuggestions.length === 0 &&
+              recommendations.length === 0 &&
+              moveSuggestions.length === 0 &&
+              duplicates.length === 0 &&
+              emptyFolders.length === 0 &&
+              !isAnalyzing && (
+                <div className="text-center py-12">
+                  <p className="text-lg text-gray-300">Your bookmark structure looks healthy.</p>
+                  <p className="text-sm text-gray-500 mt-1">
+                    This timeframe did not surface strong bookmark, folder, or history-driven changes.
+                  </p>
+                </div>
+              )}
           </div>
         )}
       </div>
 
-      {/* Custom move folder picker */}
       {customMoveTarget && (
         <FolderPicker
           currentFolderId={customMoveTarget.currentFolderId}
-          onSelect={(folderId) => handleCustomMove(customMoveTarget, folderId)}
+          onSelect={(folderId) => handleAcceptMove(customMoveTarget, folderId)}
           onClose={() => setCustomMoveTarget(null)}
         />
       )}
+
+      {customHistoryTarget && (
+        <FolderPicker
+          onSelect={(folderId) => handleBookmarkHistorySuggestion(customHistoryTarget, folderId)}
+          onClose={() => setCustomHistoryTarget(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function SummaryCard({
+  value,
+  label,
+  tone,
+}: {
+  value: number
+  label: string
+  tone: 'sky' | 'indigo' | 'emerald' | 'amber' | 'gray'
+}) {
+  const toneMap = {
+    sky: 'text-sky-400',
+    indigo: 'text-indigo-400',
+    emerald: 'text-emerald-400',
+    amber: 'text-amber-400',
+    gray: 'text-gray-400',
+  }
+
+  return (
+    <div className="p-3 rounded-lg bg-gray-900/50 border border-gray-800 text-center">
+      <p className={cn('text-2xl font-semibold', toneMap[tone])}>{value}</p>
+      <p className="text-xs text-gray-500 mt-0.5">{label}</p>
     </div>
   )
 }

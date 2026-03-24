@@ -13,15 +13,17 @@ The core experience is local-first. Your bookmark tree lives in Chrome, your ext
 - A "Discover" flow that feels more like triage than folder maintenance.
 - Reminder scheduling for links you actually want to come back to.
 - Per-bookmark notes, tags, and context stored alongside the bookmark in extension storage.
-- An optional "Command" page that can turn plain-English requests into bookmark actions.
+- An `AI Chat` page that can turn plain-English requests into bookmark actions.
+- An `Organize` page that combines bookmark structure with recent Chrome history to suggest bookmarks, moves, renames, and cleanup work.
 
 ## Current Product Surface
 
-Today, the extension is centered around five pages:
+Today, the extension is centered around six pages:
 
 - `Bookmarks`: browse the full tree, create folders, drag to reorder, and manage the structure directly.
-- `Command`: use an OpenAI key to search, rename, move, create folders, and perform bulk bookmark actions from natural language.
-- `Discover`: review bookmarks one by one, add notes and tags, and triage them into keep, skip, archive, or delete.
+- `AI Chat`: use an OpenAI key to search, rename, move, create folders, and perform bulk bookmark actions from natural language.
+- `Organize`: analyze bookmarks against Chrome history to suggest new bookmarks, better folder placement, folder renames, reorder ideas, and cleanup work.
+- `Discover`: review bookmarks one by one, add notes and tags, and work through them like flashcards with keep, skip, delete, previous, and next controls.
 - `Reminders`: manage bookmark follow-ups and recurring reminders.
 - `Settings`: configure local preferences and the optional OpenAI API key.
 
@@ -34,6 +36,7 @@ Better Bookmarks is designed to be useful without standing up a backend.
 Out of the box, the project already supports:
 
 - reading and managing the Chrome bookmark tree
+- reading recent Chrome history to find high-frequency sites and rank organizational relevance
 - storing bookmark notes, tags, folder descriptions, and triage history in `chrome.storage.local`
 - storing user settings and the OpenAI API key in `chrome.storage.sync`
 - scheduling reminders with Chrome alarms and notifications
@@ -52,7 +55,7 @@ The current command workflow:
 - receives structured actions back
 - executes those actions through the Chrome bookmarks API
 
-The Command page uses your chosen OpenAI text model directly from the extension. The default is `gpt-5.4-mini`, and the picker is curated to current relevant API text models for this workflow. The API key is stored in Chrome sync storage and sent only to OpenAI when you use that feature.
+The AI Chat page uses your chosen OpenAI text model directly from the extension. The default is `gpt-5.4-mini`, and the picker is curated to current relevant API text models for this workflow. The API key is stored in Chrome sync storage and sent only to OpenAI when you use that feature.
 
 The repo also includes early Supabase migrations and edge functions for future cloud-backed search, embeddings, summaries, and organization suggestions. That path is not fully wired into the live dashboard flow yet, so this repository should be understood as a solid local product with some backend scaffolding still in progress.
 
@@ -125,7 +128,7 @@ The local bookmark management features do not require an external backend.
 
 Some features do make network requests:
 
-- The Command page calls the OpenAI API if you configure an API key.
+- The AI Chat page calls the OpenAI API if you configure an API key.
 - Page parsing and summary extraction may use Jina Reader to pull readable page content from bookmarked URLs.
 - The repo includes Supabase modules and edge functions, but they are not the primary path for the current UI.
 
@@ -136,6 +139,7 @@ The extension requests broad host permissions because it can fetch bookmarked pa
 The extension currently requests:
 
 - `bookmarks` to read and mutate the bookmark tree
+- `history` to analyze recent browsing patterns and suggest bookmark/folder changes
 - `storage` to persist settings, notes, reminders, and local metadata
 - `alarms` and `notifications` for reminder delivery
 - `activeTab` plus broad host permissions for page fetching and parsing
@@ -144,7 +148,6 @@ The extension currently requests:
 ## Known Limitations
 
 - The Supabase-backed path is incomplete and should be treated as experimental.
-- Some older modules and pages exist in the repo but are not part of the main dashboard navigation today.
 - The Command experience depends on the quality of model output, so bulk actions should still be reviewed before you trust them blindly.
 - The extension is Chrome-first; other Chromium browsers may work, but that is not the primary target.
 
