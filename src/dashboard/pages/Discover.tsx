@@ -1249,7 +1249,10 @@ export function Discover() {
                     />
                   </div>
                   <p className="text-center text-[10px] text-gray-600 mt-3">
-                    Use left and right arrows for Previous and Next. Press <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">K</kbd> to keep, <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">S</kbd> to skip, <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">D</kbd> to delete, <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">N</kbd> for notes, <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">R</kbd> to rename, and <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">O</kbd> to open.
+                    Use left and right arrows for Previous and Next.
+                  </p>
+                  <p className="text-center text-[10px] text-gray-600">
+                    Press <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">K</kbd> to keep, <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">S</kbd> to skip, <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">D</kbd> to delete, <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">N</kbd> for notes, <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">R</kbd> to rename, and <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">O</kbd> to open.
                   </p>
                 </div>
               </div>
