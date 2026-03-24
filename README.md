@@ -35,8 +35,6 @@ The core experience is local-first. Your bookmark tree lives in Chrome, your ext
 
 ## Current Product Surface
 
-Today, the extension is centered around six pages:
-
 - `Bookmarks`: browse the full tree, create folders, drag items across folders, multi-select with `Cmd/Ctrl` or `Shift`, and right-click to batch move, delete, or ask AI what to do with the selection.
 - `AI Chat`: use an OpenAI key to search, rename, move, create folders, preview planned changes, and perform bulk bookmark actions from natural language.
 - `Organize`: analyze bookmarks against Chrome history to suggest new bookmarks, better folder placement, folder renames, reorder ideas, and cleanup work.
