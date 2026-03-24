@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  Made with obsessive bookmark hoarder energy by <a href="https://x.com/ai_singhal">@ai_singhal</a>
+  Made with by a fellow obsessive bookmark hoarder <a href="https://x.com/ai_singhal">@ai_singhal</a>
 </p>
 
 I built Better Bookmarks because I was tired of searching through my 500+ bookmarks to find one research paper I bookmarked 2 years ago. It was such a frustrating experience. I knew I had saved the link, but I couldn't remember why I saved it or where it was in my massive list of bookmarks.
@@ -122,13 +122,3 @@ After loading the extension, Better Bookmarks opens the dashboard on first insta
 - `@crxjs/vite-plugin`
 - Zustand
 - Tailwind CSS v4
-
----
-
-<p align="center">
-  Built for people with 5,000 bookmarks saved and absolutely no intention of becoming more organized without help.
-</p>
-
-<p align="center">
-  made with love by <a href="https://x.com/ai_singhal">@ai_singhal</a>
-</p>
