@@ -3,6 +3,7 @@ import { useBookmarkStore } from '../../shared/store'
 import { resolveBookmarkFolders } from '../../shared/chromeApi'
 import { cn, truncateUrl, getFaviconUrl, formatRelativeDate } from '../../shared/utils'
 import type { BookmarkWithMetadata } from '../../shared/types'
+import { BrandLogo } from '../../shared/components/BrandLogo'
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
 
@@ -128,9 +129,7 @@ export function Sidebar() {
       {/* Logo */}
       <div className="px-5 py-5 border-b border-gray-800 flex-shrink-0">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-sm font-bold">
-            B
-          </div>
+          <BrandLogo className="w-8 h-8 flex-shrink-0" title="" />
           <div>
             <h1 className="text-sm font-semibold">Better Bookmarks</h1>
             <p className="text-xs text-gray-500">for Chrome</p>
@@ -257,7 +256,7 @@ export function Sidebar() {
 
       {/* Footer */}
       <div className="px-5 py-3 border-t border-gray-800 flex-shrink-0">
-        <p className="text-xs text-gray-600">Better Bookmarks v1.0</p>
+        <p className="text-xs text-gray-600">Better Bookmarks - Made with ❤️ by @ai_singhal on X</p>
       </div>
     </aside>
   )

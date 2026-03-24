@@ -15,6 +15,52 @@ function countFolders(nodes: BookmarkWithMetadata[]): number {
   return count
 }
 
+function moveNodeWithinParent(
+  nodes: BookmarkWithMetadata[],
+  movedId: string,
+  targetId: string,
+  position: 'above' | 'below'
+): BookmarkWithMetadata[] {
+  let didMove = false
+
+  const nextNodes = nodes.map((node) => {
+    if (!node.children) return node
+
+    const movedIndex = node.children.findIndex((child) => child.id === movedId)
+    const targetIndex = node.children.findIndex((child) => child.id === targetId)
+
+    if (movedIndex >= 0 && targetIndex >= 0) {
+      const children = [...node.children]
+      const [movedNode] = children.splice(movedIndex, 1)
+      const adjustedTargetIndex = children.findIndex((child) => child.id === targetId)
+      const insertIndex = position === 'below' ? adjustedTargetIndex + 1 : adjustedTargetIndex
+      children.splice(insertIndex, 0, movedNode)
+
+      didMove = true
+      return {
+        ...node,
+        children: children.map((child, index) => ({
+          ...child,
+          index,
+        })),
+      }
+    }
+
+    const nextChildren = moveNodeWithinParent(node.children, movedId, targetId, position)
+    if (nextChildren !== node.children) {
+      didMove = true
+      return {
+        ...node,
+        children: nextChildren,
+      }
+    }
+
+    return node
+  })
+
+  return didMove ? nextNodes : nodes
+}
+
 export function BookmarkTree() {
   const bookmarkTree = useBookmarkStore((s) => s.bookmarkTree)
   const setBookmarkTree = useBookmarkStore((s) => s.setBookmarkTree)
@@ -27,9 +73,12 @@ export function BookmarkTree() {
   const dragNodeRef = useRef<BookmarkWithMetadata | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const [dragPosition, setDragPosition] = useState<'above' | 'below' | null>(null)
+  const suppressedMoveIdsRef = useRef<Map<string, number>>(new Map())
 
-  const loadBookmarks = useCallback(async () => {
-    setLoading(true)
+  const loadBookmarks = useCallback(async (showSpinner = false) => {
+    if (showSpinner) {
+      setLoading(true)
+    }
     try {
       const tree = await getBookmarkTree()
       setBookmarkTree(tree)
@@ -39,7 +88,9 @@ export function BookmarkTree() {
     } catch (err) {
       console.error('Failed to load bookmarks:', err)
     } finally {
-      setLoading(false)
+      if (showSpinner) {
+        setLoading(false)
+      }
     }
   }, [setBookmarkTree])
 
@@ -78,7 +129,10 @@ export function BookmarkTree() {
         parentId: dragNode.parentId,
         index: newIndex,
       })
-      loadBookmarks()
+      suppressedMoveIdsRef.current.set(dragNode.id, Date.now())
+      setBookmarkTree(
+        moveNodeWithinParent(bookmarkTree, dragNode.id, targetNode.id, dragPosition === 'below' ? 'below' : 'above')
+      )
     } catch (err) {
       console.error('Reorder failed:', err)
     } finally {
@@ -86,22 +140,30 @@ export function BookmarkTree() {
       setDragOverId(null)
       setDragPosition(null)
     }
-  }, [dragPosition, loadBookmarks])
+  }, [bookmarkTree, dragPosition, setBookmarkTree])
 
   useEffect(() => {
-    void loadBookmarks()
+    void loadBookmarks(true)
   }, [loadBookmarks])
 
   // Listen for bookmark changes
   useEffect(() => {
-    const listener = (msg: { type: string }) => {
+    const listener = (msg: { type: string; payload?: { id?: string } }) => {
       if (
         msg.type === 'BOOKMARK_CREATED' ||
         msg.type === 'BOOKMARK_REMOVED' ||
         msg.type === 'BOOKMARK_CHANGED' ||
         msg.type === 'BOOKMARK_MOVED'
       ) {
-        void loadBookmarks()
+        if (msg.type === 'BOOKMARK_MOVED' && msg.payload?.id) {
+          const suppressedAt = suppressedMoveIdsRef.current.get(msg.payload.id)
+          if (suppressedAt && Date.now() - suppressedAt < 1500) {
+            suppressedMoveIdsRef.current.delete(msg.payload.id)
+            return
+          }
+        }
+
+        void loadBookmarks(false)
       }
     }
 
@@ -142,7 +204,7 @@ export function BookmarkTree() {
               + New Folder
             </button>
             <button
-              onClick={loadBookmarks}
+              onClick={() => void loadBookmarks(true)}
               className="px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200 border border-gray-700 rounded-lg hover:bg-gray-800 transition-colors"
             >
               Refresh
@@ -167,7 +229,7 @@ export function BookmarkTree() {
                 await chrome.bookmarks.create({ parentId: '1', title: newFolderName.trim() })
                 setCreatingFolder(false)
                 setNewFolderName('')
-                loadBookmarks()
+                loadBookmarks(false)
               } else if (e.key === 'Escape') {
                 setCreatingFolder(false)
                 setNewFolderName('')

@@ -5,6 +5,7 @@ import { QuickActions } from './components/QuickActions'
 import type { BookmarkWithMetadata } from '../shared/types'
 import { countBookmarks, resolveBookmarkFolders } from '../shared/chromeApi'
 import { loadIndex, search as semanticSearch } from '../lib/localSearchEngine'
+import { BrandLogo } from '../shared/components/BrandLogo'
 
 export function Popup() {
   const [bookmarkCount, setBookmarkCount] = useState(0)
@@ -104,9 +105,7 @@ export function Popup() {
       <div className="px-4 pt-4 pb-3 border-b border-gray-800 flex-shrink-0">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-sm font-bold">
-              B
-            </div>
+            <BrandLogo className="w-7 h-7 flex-shrink-0" title="" />
             <h1 className="text-base font-semibold">Better Bookmarks</h1>
           </div>
           <span className="text-xs text-gray-500">
