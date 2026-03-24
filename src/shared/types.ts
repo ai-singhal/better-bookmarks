@@ -103,6 +103,32 @@ export interface FolderNode {
   bookmarkCount: number
 }
 
+export interface BookmarkSnapshotNode {
+  title: string
+  url?: string
+  children?: BookmarkSnapshotNode[]
+}
+
+export interface BookmarkTreeSnapshotRoot {
+  rootKey: string
+  title: string
+  children: BookmarkSnapshotNode[]
+}
+
+export interface BookmarkTreeSnapshot {
+  version: 1
+  roots: BookmarkTreeSnapshotRoot[]
+}
+
+export interface BookmarkTreeSnapshotSummary {
+  id: string
+  label: string
+  createdAt: number
+  bookmarkCount: number
+  folderCount: number
+  rootCount: number
+}
+
 export type MessageType =
   | 'GET_BOOKMARK_TREE'
   | 'GET_BOOKMARK_COUNT'

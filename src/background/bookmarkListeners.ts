@@ -1,4 +1,5 @@
 import { recordDeletedBookmark } from '../lib/deletedBookmarkService'
+import { BOOKMARK_RESTORE_IN_PROGRESS_KEY } from '../lib/bookmarkSnapshotService'
 
 const suppressedRemovedIds = new Set<string>()
 
@@ -32,26 +33,35 @@ export function setupBookmarkListeners() {
   chrome.bookmarks.onRemoved.addListener((id, removeInfo) => {
     console.log('[Bookmarks] Removed:', id)
 
-    if (suppressedRemovedIds.has(id)) {
-      suppressedRemovedIds.delete(id)
-      return
-    }
+    chrome.storage.local.get(BOOKMARK_RESTORE_IN_PROGRESS_KEY).then((data) => {
+      const restoreInProgress = Boolean(data[BOOKMARK_RESTORE_IN_PROGRESS_KEY])
 
-    if (removeInfo.node) {
-      const descendantIds = collectDescendantIds(removeInfo.node)
-      for (const descendantId of descendantIds) {
-        suppressedRemovedIds.add(descendantId)
+      if (suppressedRemovedIds.has(id)) {
+        suppressedRemovedIds.delete(id)
+        return
       }
 
-      recordDeletedBookmark(id, removeInfo.node).catch((err) => {
-        console.error('[Bookmarks] Failed to record deleted bookmark:', err)
-      })
-    }
+      if (!restoreInProgress && removeInfo.node) {
+        const descendantIds = collectDescendantIds(removeInfo.node)
+        for (const descendantId of descendantIds) {
+          suppressedRemovedIds.add(descendantId)
+        }
 
-    chrome.runtime.sendMessage({
-      type: 'BOOKMARK_REMOVED',
-      payload: { id, removeInfo },
-    }).catch(() => {})
+        recordDeletedBookmark(id, removeInfo.node).catch((err) => {
+          console.error('[Bookmarks] Failed to record deleted bookmark:', err)
+        })
+      }
+
+      chrome.runtime.sendMessage({
+        type: 'BOOKMARK_REMOVED',
+        payload: { id, removeInfo },
+      }).catch(() => {})
+    }).catch(() => {
+      chrome.runtime.sendMessage({
+        type: 'BOOKMARK_REMOVED',
+        payload: { id, removeInfo },
+      }).catch(() => {})
+    })
   })
 
   chrome.bookmarks.onChanged.addListener((id, changeInfo) => {

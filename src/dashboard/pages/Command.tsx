@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { getBookmarkTree, flattenBookmarks } from '../../shared/chromeApi'
 import { streamAI, executeActions, getOpenAIKey, setOpenAIKey, getOpenAIModel, setOpenAIModel, OPENAI_MODELS, DEFAULT_OPENAI_MODEL, type AIAction, type AIResponse } from '../../lib/openaiService'
 import type { BookmarkWithMetadata } from '../../shared/types'
-import { cn, getFaviconUrl, truncateUrl, formatRelativeDate } from '../../shared/utils'
+import { cn, getFaviconUrl, markFaviconUnavailable, truncateUrl, formatRelativeDate } from '../../shared/utils'
 
 interface ChatMessage {
   id: string
@@ -30,6 +30,123 @@ interface StoredChatState {
 
 const CHAT_STORAGE_KEY = 'ai_chat_sessions_v1'
 const MAX_SAVED_CHATS = 15
+const HISTORY_LOOKBACK_DAYS = 120
+
+type HistoryBookmarkSummary = {
+  bookmarkId: string
+  title: string
+  url: string
+  folderId: string
+  folderPath: string
+  visitCount: number
+  typedCount: number
+  lastVisitTime: number
+}
+
+function normalizeHistoryUrl(url: string): string {
+  try {
+    const parsed = new URL(url)
+    parsed.hash = ''
+    const normalizedPath = parsed.pathname.replace(/\/+$/, '')
+    parsed.pathname = normalizedPath || '/'
+    return parsed.toString()
+  } catch {
+    return url
+  }
+}
+
+function buildFolderPathMap(nodes: BookmarkWithMetadata[], path = '', map = new Map<string, string>()) {
+  for (const node of nodes) {
+    if (!node.url && node.children) {
+      const folderPath = path ? `${path} / ${node.title}` : node.title
+      map.set(node.id, folderPath)
+      buildFolderPathMap(node.children, folderPath, map)
+    }
+  }
+  return map
+}
+
+function buildHistoryContext(
+  summaries: HistoryBookmarkSummary[],
+  query: string,
+  timeframeDays: number
+): string | null {
+  if (summaries.length === 0) {
+    return `Chrome history context for the last ${timeframeDays} days: none of the user's bookmarked URLs appeared in recent history.`
+  }
+
+  const queryLower = query.toLowerCase()
+  const byFolder = new Map<string, { path: string; items: HistoryBookmarkSummary[]; totalVisits: number }>()
+
+  for (const summary of summaries) {
+    const existing = byFolder.get(summary.folderId)
+    if (existing) {
+      existing.items.push(summary)
+      existing.totalVisits += summary.visitCount
+    } else {
+      byFolder.set(summary.folderId, {
+        path: summary.folderPath,
+        items: [summary],
+        totalVisits: summary.visitCount,
+      })
+    }
+  }
+
+  const folderGroups = [...byFolder.entries()]
+    .map(([folderId, group]) => ({
+      folderId,
+      path: group.path,
+      totalVisits: group.totalVisits,
+      items: group.items.sort((a, b) => {
+        if (b.visitCount !== a.visitCount) return b.visitCount - a.visitCount
+        return b.lastVisitTime - a.lastVisitTime
+      }),
+    }))
+    .filter((group) => group.totalVisits > 0)
+
+  const relevantFolders = folderGroups.filter((group) => {
+    const pathLower = group.path.toLowerCase()
+    const pathParts = group.path.split(' / ')
+    const leafName = pathParts[pathParts.length - 1]?.toLowerCase() || ''
+    return Boolean(
+      (leafName.length >= 3 && queryLower.includes(leafName)) ||
+      (pathLower.length >= 3 && queryLower.includes(pathLower))
+    )
+  })
+
+  const selectedFolders = (relevantFolders.length > 0 ? relevantFolders : folderGroups)
+    .sort((a, b) => {
+      if (b.totalVisits !== a.totalVisits) return b.totalVisits - a.totalVisits
+      return a.path.localeCompare(b.path)
+    })
+    .slice(0, relevantFolders.length > 0 ? 4 : 8)
+
+  const topBookmarks = [...summaries]
+    .sort((a, b) => {
+      if (b.visitCount !== a.visitCount) return b.visitCount - a.visitCount
+      return b.lastVisitTime - a.lastVisitTime
+    })
+    .slice(0, 8)
+
+  const lines = [
+    `Chrome history context for the last ${timeframeDays} days. Use this when the user asks about usage frequency, ordering, prioritization, or what they visit most.`,
+    'Most visited bookmarked URLs overall:',
+    ...topBookmarks.map((item, index) => `${index + 1}. [B:${item.bookmarkId}] ${item.title || item.url} | ${item.visitCount} visits | folder: ${item.folderPath}`),
+  ]
+
+  if (selectedFolders.length > 0) {
+    lines.push('Relevant folder usage:')
+    for (const group of selectedFolders) {
+      lines.push(`- [F:${group.folderId}] ${group.path} | total visits across bookmarked URLs: ${group.totalVisits}`)
+      for (const item of group.items.slice(0, 6)) {
+        lines.push(`  - [B:${item.bookmarkId}] ${item.title || item.url} | ${item.visitCount} visits`)
+      }
+    }
+  }
+
+  lines.push('When reordering within a folder, put the highest-visit items earlier unless the user asks for a different rule.')
+  return lines.join('\n')
+}
 
 function sanitizeChatMessages(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((message) => ({
@@ -45,6 +162,49 @@ function buildChatTitle(messages: ChatMessage[]): string {
 
   const title = firstUserMessage.content.trim().replace(/\s+/g, ' ')
   return title.length > 42 ? `${title.slice(0, 42)}…` : title
+}
+
+function getVisibleSearchResults(
+  searchResults: AIResponse['searchResults'],
+  allBookmarks: Map<string, BookmarkWithMetadata>
+) {
+  return (searchResults || [])
+    .map((result) => {
+      const bookmark = allBookmarks.get(result.bookmarkId)
+      return bookmark ? { ...result, bookmark } : null
+    })
+    .filter((result): result is { bookmarkId: string; reason: string; bookmark: BookmarkWithMetadata } => result !== null)
+}
+
+function buildNodeTitleMap(nodes: BookmarkWithMetadata[], map = new Map<string, string>()) {
+  for (const node of nodes) {
+    map.set(node.id, node.title || 'Untitled')
+    if (node.children?.length) {
+      buildNodeTitleMap(node.children, map)
+    }
+  }
+  return map
+}
+
+function formatActionPreview(
+  action: AIAction,
+  bookmarkTitles: Map<string, string>,
+  folderTitles: Map<string, string>
+) {
+  switch (action.type) {
+    case 'create_folder':
+      return `Create "${action.title || 'New Folder'}"${action.parentId ? ` inside "${folderTitles.get(action.parentId) || action.parentId}"` : ''}`
+    case 'move':
+      return `"${bookmarkTitles.get(action.bookmarkId || '') || action.bookmarkId}" -> "${folderTitles.get(action.destinationFolderId || '') || action.destinationFolderId}"`
+    case 'delete':
+      return `Delete "${bookmarkTitles.get(action.bookmarkId || '') || action.bookmarkId}"`
+    case 'rename':
+      return `Rename "${bookmarkTitles.get(action.bookmarkId || '') || action.bookmarkId}" -> "${action.title}"`
+    case 'reorder':
+      return `"${bookmarkTitles.get(action.bookmarkId || '') || action.bookmarkId}" -> position ${action.index} in "${folderTitles.get(action.parentId || '') || action.parentId}"`
+    default:
+      return action.type
+  }
 }
 
 function upsertStoredSession(
@@ -153,6 +313,77 @@ export function Command() {
     setAllBookmarks(new Map(flat.map(b => [b.id, b])))
   }, [])
 
+  const buildAiHistoryContext = useCallback(async (query: string) => {
+    const rootChildren = bookmarkTree[0]?.children || bookmarkTree
+    const folderPathMap = buildFolderPathMap(rootChildren)
+    const bookmarkList = [...allBookmarks.values()].filter((bookmark) => bookmark.url && bookmark.parentId)
+
+    if (bookmarkList.length === 0) return null
+
+    const bookmarksByUrl = new Map<string, BookmarkWithMetadata[]>()
+    for (const bookmark of bookmarkList) {
+      const normalizedUrl = normalizeHistoryUrl(bookmark.url!)
+      const existing = bookmarksByUrl.get(normalizedUrl)
+      if (existing) existing.push(bookmark)
+      else bookmarksByUrl.set(normalizedUrl, [bookmark])
+    }
+
+    const historyItems = await chrome.history.search({
+      text: '',
+      startTime: Date.now() - HISTORY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
+      maxResults: 5000,
+    })
+
+    const stats = new Map<string, Omit<HistoryBookmarkSummary, 'bookmarkId' | 'title' | 'url' | 'folderId' | 'folderPath'> & {
+      bookmarkId: string
+      title: string
+      url: string
+      folderId: string
+      folderPath: string
+    }>()
+
+    for (const item of historyItems) {
+      if (!item.url) continue
+      const matches = bookmarksByUrl.get(normalizeHistoryUrl(item.url))
+      if (!matches?.length) continue
+
+      for (const bookmark of matches) {
+        const folderId = bookmark.parentId
+        if (!folderId) continue
+
+        const key = `${bookmark.id}:${folderId}`
+        const existing = stats.get(key)
+        const visitCount = item.visitCount || 0
+        const typedCount = item.typedCount || 0
+        const lastVisitTime = item.lastVisitTime || 0
+
+        if (existing) {
+          existing.visitCount += visitCount
+          existing.typedCount += typedCount
+          existing.lastVisitTime = Math.max(existing.lastVisitTime, lastVisitTime)
+          continue
+        }
+
+        stats.set(key, {
+          bookmarkId: bookmark.id,
+          title: bookmark.title,
+          url: bookmark.url!,
+          folderId,
+          folderPath: folderPathMap.get(folderId) || 'Bookmarks',
+          visitCount,
+          typedCount,
+          lastVisitTime,
+        })
+      }
+    }
+
+    return buildHistoryContext(
+      [...stats.values()].filter((item) => item.visitCount > 0 || item.typedCount > 0),
+      query,
+      HISTORY_LOOKBACK_DAYS
+    )
+  }, [allBookmarks, bookmarkTree])
+
   // Listen for bookmark changes
   useEffect(() => {
     const listener = (msg: { type: string }) => {
@@ -229,6 +460,8 @@ export function Command() {
           : m.content,
       }))
 
+      const historyContext = await buildAiHistoryContext(query)
+
       const response = await streamAI(query, bookmarkTree, history, {
         onMessage: (content, rawContent) => {
           setMessages(prev => prev.map((message) =>
@@ -242,6 +475,8 @@ export function Command() {
               : message
           ))
         },
+      }, {
+        additionalContext: historyContext || undefined,
       })
 
       setMessages(prev => prev.map((message) =>
@@ -406,6 +641,12 @@ export function Command() {
     )
   }
 
+  const rootChildren = bookmarkTree[0]?.children || bookmarkTree
+  const nodeTitleMap = buildNodeTitleMap(rootChildren)
+  const folderTitleMap = new Map(
+    [...nodeTitleMap.entries()].filter(([id]) => !allBookmarks.has(id))
+  )
+
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
@@ -559,139 +800,132 @@ export function Command() {
 
         {messages.map((msg, i) => (
           <div key={msg.id} className={cn('flex', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
-            <div className={cn(
-              'max-w-[85%] rounded-2xl px-4 py-3',
-              msg.role === 'user'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-gray-900 border border-gray-800 text-gray-200'
-            )}>
-              {/* Message text */}
-              <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                {msg.content}
-                {msg.streaming && (
-                  <span className="inline-block w-2 h-4 ml-1 align-[-2px] bg-indigo-400/70 animate-pulse rounded-sm" />
-                )}
-              </p>
+            {(() => {
+              const visibleSearchResults = getVisibleSearchResults(msg.response?.searchResults, allBookmarks)
 
-              {/* Search results */}
-              {msg.response?.searchResults && msg.response.searchResults.length > 0 && (
-                <div className="mt-3 space-y-1.5">
-                  <p className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
-                    {msg.response.searchResults.length} results
-                  </p>
-                  {msg.response.searchResults.map((sr) => {
-                    const bookmark = allBookmarks.get(sr.bookmarkId)
-                    if (!bookmark) return null
-                    return (
-                      <button
-                        key={sr.bookmarkId}
-                        onClick={() => bookmark.url && chrome.tabs.create({ url: bookmark.url })}
-                        className="w-full flex items-start gap-2.5 p-2.5 rounded-xl bg-gray-800/50 hover:bg-gray-800 transition-colors text-left"
-                      >
-                        <img
-                          src={bookmark.url ? getFaviconUrl(bookmark.url) : ''}
-                          alt=""
-                          className="w-4 h-4 rounded flex-shrink-0 mt-0.5"
-                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                        />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-medium text-gray-200 truncate">
-                            {bookmark.title || 'Untitled'}
-                          </p>
-                          <p className="text-[10px] text-gray-500 truncate mt-0.5">
-                            {bookmark.url ? truncateUrl(bookmark.url, 50) : ''}
-                          </p>
-                          {sr.reason && (
-                            <p className="text-[10px] text-gray-500 mt-0.5 italic">{sr.reason}</p>
-                          )}
-                        </div>
-                        <span className="text-[10px] text-gray-600 flex-shrink-0">
-                          {formatRelativeDate(bookmark.dateAdded)}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-
-              {/* Pending actions */}
-              {msg.response && hasExecutableActions(msg.response.actions) && !msg.executionResult && (
-                <div className="mt-3 pt-3 border-t border-gray-800">
-                  {(() => {
-                    const executableActions = msg.response.actions.filter(a => a.type !== 'search_results')
-                    const isExpanded = expandedActionMessageIds.has(msg.id)
-                    const visibleActions = isExpanded ? executableActions : executableActions.slice(0, 8)
-
-                    return (
-                      <>
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs text-gray-500">
-                      Pending: {getActionSummary(msg.response.actions)}
-                    </p>
-                    <button
-                      onClick={() => handleExecuteActions(i)}
-                      disabled={msg.executing}
-                      className={cn(
-                        'px-3 py-1.5 text-xs font-medium rounded-lg transition-colors',
-                        msg.executing
-                          ? 'bg-gray-700 text-gray-400'
-                          : 'bg-indigo-600 text-white hover:bg-indigo-500'
-                      )}
-                    >
-                      {msg.executing ? (
-                        <span className="flex items-center gap-1.5">
-                          <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                          Running...
-                        </span>
-                      ) : (
-                        'Run'
-                      )}
-                    </button>
-                  </div>
-
-                  {/* Action preview */}
-                  <div className="mt-2 space-y-1">
-                    {visibleActions.map((action, j) => (
-                      <div key={j} className="flex items-center gap-2 text-[11px] text-gray-500">
-                        <span className={cn(
-                          'px-1.5 py-0.5 rounded font-mono',
-                          action.type === 'move' ? 'bg-blue-900/30 text-blue-400' :
-                          action.type === 'create_folder' ? 'bg-emerald-900/30 text-emerald-400' :
-                          action.type === 'delete' ? 'bg-red-900/30 text-red-400' :
-                          action.type === 'rename' ? 'bg-yellow-900/30 text-yellow-400' :
-                          'bg-gray-800 text-gray-400'
-                        )}>
-                          {action.type}
-                        </span>
-                        <span className="truncate">
-                          {action.type === 'create_folder' && `"${action.title}"`}
-                          {action.type === 'move' && (() => {
-                            const bk = allBookmarks.get(action.bookmarkId || '')
-                            return bk ? `"${bk.title}"` : action.bookmarkId
-                          })()}
-                          {action.type === 'delete' && (() => {
-                            const bk = allBookmarks.get(action.bookmarkId || '')
-                            return bk ? `"${bk.title}"` : action.bookmarkId
-                          })()}
-                          {action.type === 'rename' && `→ "${action.title}"`}
-                          {action.type === 'reorder' && (() => {
-                            const bk = allBookmarks.get(action.bookmarkId || '')
-                            return bk ? `"${bk.title}" → position ${action.index}` : ''
-                          })()}
-                        </span>
-                      </div>
-                    ))}
-                    {executableActions.length > 8 && (
-                      <button
-                        onClick={() => toggleExpandedActions(msg.id)}
-                        className="text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors"
-                      >
-                        {isExpanded
-                          ? 'Show fewer actions'
-                          : `Show all ${executableActions.length} actions`}
-                      </button>
+              return (
+                <div className={cn(
+                  'max-w-[85%] rounded-2xl px-4 py-3',
+                  msg.role === 'user'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-gray-900 border border-gray-800 text-gray-200'
+                )}>
+                  {/* Message text */}
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                    {msg.content}
+                    {msg.streaming && (
+                      <span className="inline-block w-2 h-4 ml-1 align-[-2px] bg-indigo-400/70 animate-pulse rounded-sm" />
                     )}
-                  </div>
+                  </p>
+
+                  {/* Search results */}
+                  {visibleSearchResults.length > 0 && (
+                    <div className="mt-3 space-y-1.5">
+                      <p className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
+                        {visibleSearchResults.length} result{visibleSearchResults.length !== 1 && 's'}
+                      </p>
+                      {visibleSearchResults.map((sr) => {
+                        const { bookmark } = sr
+                        return (
+                          <button
+                            key={sr.bookmarkId}
+                            onClick={() => bookmark.url && chrome.tabs.create({ url: bookmark.url })}
+                            className="w-full flex items-start gap-2.5 p-2.5 rounded-xl bg-gray-800/50 hover:bg-gray-800 transition-colors text-left"
+                          >
+                            <img
+                              src={bookmark.url ? getFaviconUrl(bookmark.url) : ''}
+                              alt=""
+                              className="w-4 h-4 rounded flex-shrink-0 mt-0.5"
+                              onError={(e) => {
+                                if (bookmark.url) markFaviconUnavailable(bookmark.url)
+                                ;(e.target as HTMLImageElement).style.display = 'none'
+                              }}
+                            />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-medium text-gray-200 truncate">
+                                {bookmark.title || 'Untitled'}
+                              </p>
+                              <p className="text-[10px] text-gray-500 truncate mt-0.5">
+                                {bookmark.url ? truncateUrl(bookmark.url, 50) : ''}
+                              </p>
+                              {sr.reason && (
+                                <p className="text-[10px] text-gray-500 mt-0.5 italic">{sr.reason}</p>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-gray-600 flex-shrink-0">
+                              {formatRelativeDate(bookmark.dateAdded)}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {/* Pending actions */}
+                  {msg.response && hasExecutableActions(msg.response.actions) && !msg.executionResult && (
+                    <div className="mt-3 pt-3 border-t border-gray-800">
+                      {(() => {
+                        const executableActions = msg.response.actions.filter(a => a.type !== 'search_results')
+                        const isExpanded = expandedActionMessageIds.has(msg.id)
+                        const visibleActions = isExpanded ? executableActions : executableActions.slice(0, 8)
+
+                        return (
+                          <>
+                            <div className="flex items-center justify-between">
+                              <p className="text-xs text-gray-500">
+                                Planned changes: {getActionSummary(msg.response.actions)}
+                              </p>
+                              <button
+                                onClick={() => handleExecuteActions(i)}
+                                disabled={msg.executing}
+                                className={cn(
+                                  'px-3 py-1.5 text-xs font-medium rounded-lg transition-colors',
+                                  msg.executing
+                                    ? 'bg-gray-700 text-gray-400'
+                                    : 'bg-indigo-600 text-white hover:bg-indigo-500'
+                                )}
+                              >
+                                {msg.executing ? (
+                                  <span className="flex items-center gap-1.5">
+                                    <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                    Running...
+                                  </span>
+                                ) : (
+                                  'Run'
+                                )}
+                              </button>
+                            </div>
+
+                            {/* Action preview */}
+                            <div className="mt-2 space-y-1">
+                              {visibleActions.map((action, j) => (
+                                <div key={j} className="flex items-center gap-2 text-[11px] text-gray-500">
+                                  <span className={cn(
+                                    'px-1.5 py-0.5 rounded font-mono',
+                                    action.type === 'move' ? 'bg-blue-900/30 text-blue-400' :
+                                    action.type === 'create_folder' ? 'bg-emerald-900/30 text-emerald-400' :
+                                    action.type === 'delete' ? 'bg-red-900/30 text-red-400' :
+                                    action.type === 'rename' ? 'bg-yellow-900/30 text-yellow-400' :
+                                    'bg-gray-800 text-gray-400'
+                                  )}>
+                                    {action.type}
+                                  </span>
+                                  <span className="truncate">
+                                    {formatActionPreview(action, nodeTitleMap, folderTitleMap)}
+                                  </span>
+                                </div>
+                              ))}
+                              {executableActions.length > 8 && (
+                                <button
+                                  onClick={() => toggleExpandedActions(msg.id)}
+                                  className="text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors"
+                                >
+                                  {isExpanded
+                                    ? 'Show fewer actions'
+                                    : `Show all ${executableActions.length} actions`}
+                                </button>
+                              )}
+                            </div>
                       </>
                     )
                   })()}
@@ -725,6 +959,8 @@ export function Command() {
                 </div>
               )}
             </div>
+              )
+            })()}
           </div>
         ))}
 

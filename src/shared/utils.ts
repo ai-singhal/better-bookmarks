@@ -1,6 +1,8 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 
+const unavailableFaviconHosts = new Set<string>()
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
@@ -52,10 +54,20 @@ export function getDomain(url: string): string {
 
 export function getFaviconUrl(url: string): string {
   try {
-    const domain = new URL(url).origin
+    const parsed = new URL(url)
+    if (unavailableFaviconHosts.has(parsed.hostname)) return ''
+    const domain = parsed.origin
     return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`
   } catch {
     return ''
+  }
+}
+
+export function markFaviconUnavailable(url: string): void {
+  try {
+    unavailableFaviconHosts.add(new URL(url).hostname)
+  } catch {
+    // Ignore bad URLs.
   }
 }
 
