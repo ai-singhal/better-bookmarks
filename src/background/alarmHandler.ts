@@ -11,10 +11,6 @@ export function setupAlarmHandler() {
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name.startsWith(ALARM_NAMES.REMINDER_PREFIX)) {
       handleReminderAlarm(alarm)
-    } else if (alarm.name === ALARM_NAMES.BATCH_PROCESS) {
-      handleBatchProcessAlarm()
-    } else if (alarm.name === ALARM_NAMES.SYNC_CHECK) {
-      handleSyncCheckAlarm()
     }
   })
 }
@@ -59,16 +55,6 @@ async function handleReminderAlarm(alarm: chrome.alarms.Alarm) {
     // Bookmark may have been deleted
     await chrome.storage.local.remove(key)
   }
-}
-
-async function handleBatchProcessAlarm() {
-  // TODO: Phase 3 — process next batch of embeddings
-  console.log('[Alarms] Batch process triggered')
-}
-
-async function handleSyncCheckAlarm() {
-  // TODO: Phase 8 — check for cross-device sync updates
-  console.log('[Alarms] Sync check triggered')
 }
 
 // Handle notification clicks

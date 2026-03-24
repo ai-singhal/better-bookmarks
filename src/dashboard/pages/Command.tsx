@@ -1,15 +1,62 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { getBookmarkTree, flattenBookmarks } from '../../shared/chromeApi'
-import { queryAI, executeActions, getOpenAIKey, setOpenAIKey, getOpenAIModel, setOpenAIModel, OPENAI_MODELS, DEFAULT_OPENAI_MODEL, type AIAction, type AIResponse } from '../../lib/openaiService'
+import { streamAI, executeActions, getOpenAIKey, setOpenAIKey, getOpenAIModel, setOpenAIModel, OPENAI_MODELS, DEFAULT_OPENAI_MODEL, type AIAction, type AIResponse } from '../../lib/openaiService'
 import type { BookmarkWithMetadata } from '../../shared/types'
 import { cn, getFaviconUrl, truncateUrl, formatRelativeDate } from '../../shared/utils'
 
 interface ChatMessage {
+  id: string
   role: 'user' | 'assistant'
   content: string
   response?: AIResponse
   executionResult?: { success: number; failed: number; errors: string[] }
   executing?: boolean
+  streaming?: boolean
+  rawContent?: string
+}
+
+interface StoredChatSession {
+  id: string
+  title: string
+  updatedAt: number
+  model: string
+  messages: ChatMessage[]
+}
+
+interface StoredChatState {
+  activeChatId: string | null
+  sessions: StoredChatSession[]
+}
+
+const CHAT_STORAGE_KEY = 'ai_chat_sessions_v1'
+const MAX_SAVED_CHATS = 15
+
+function sanitizeChatMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((message) => ({
+    ...message,
+    streaming: false,
+    rawContent: undefined,
+  }))
+}
+
+function buildChatTitle(messages: ChatMessage[]): string {
+  const firstUserMessage = messages.find((message) => message.role === 'user' && message.content.trim())
+  if (!firstUserMessage) return 'New Chat'
+
+  const title = firstUserMessage.content.trim().replace(/\s+/g, ' ')
+  return title.length > 42 ? `${title.slice(0, 42)}…` : title
+}
+
+function upsertStoredSession(
+  sessions: StoredChatSession[],
+  session: StoredChatSession
+): StoredChatSession[] {
+  return [
+    session,
+    ...sessions.filter((item) => item.id !== session.id),
+  ]
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, MAX_SAVED_CHATS)
 }
 
 export function Command() {
@@ -23,6 +70,11 @@ export function Command() {
   const [savingKey, setSavingKey] = useState(false)
   const [selectedModel, setSelectedModel] = useState(DEFAULT_OPENAI_MODEL)
   const [showModelPicker, setShowModelPicker] = useState(false)
+  const [savedChats, setSavedChats] = useState<StoredChatSession[]>([])
+  const [activeChatId, setActiveChatId] = useState<string | null>(null)
+  const [chatStateHydrated, setChatStateHydrated] = useState(false)
+  const [showChatPicker, setShowChatPicker] = useState(false)
+  const [expandedActionMessageIds, setExpandedActionMessageIds] = useState<Set<string>>(new Set())
   const chatEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -39,9 +91,57 @@ export function Command() {
 
       const model = await getOpenAIModel()
       setSelectedModel(model)
+
+      const chatData = await chrome.storage.local.get(CHAT_STORAGE_KEY)
+      const stored = chatData[CHAT_STORAGE_KEY] as StoredChatState | undefined
+
+      if (stored?.sessions?.length) {
+        const sanitizedSessions = stored.sessions.map((session) => ({
+          ...session,
+          messages: sanitizeChatMessages(session.messages || []),
+        }))
+        setSavedChats(sanitizedSessions)
+
+        const activeSession = sanitizedSessions.find((session) => session.id === stored.activeChatId)
+        if (activeSession) {
+          setActiveChatId(activeSession.id)
+          setMessages(activeSession.messages)
+        }
+      }
+
+      setChatStateHydrated(true)
     }
     init()
   }, [])
+
+  useEffect(() => {
+    if (!chatStateHydrated || !activeChatId || messages.length === 0) return
+
+    const session: StoredChatSession = {
+      id: activeChatId,
+      title: buildChatTitle(messages),
+      updatedAt: Date.now(),
+      model: selectedModel,
+      messages: sanitizeChatMessages(messages),
+    }
+
+    setSavedChats((prev) => upsertStoredSession(prev, session))
+  }, [activeChatId, chatStateHydrated, messages, selectedModel])
+
+  useEffect(() => {
+    if (!chatStateHydrated) return
+
+    const payload: StoredChatState = {
+      activeChatId,
+      sessions: savedChats,
+    }
+
+    chrome.storage.local.set({
+      [CHAT_STORAGE_KEY]: payload,
+    }).catch((err) => {
+      console.error('Failed to persist saved chats:', err)
+    })
+  }, [activeChatId, chatStateHydrated, savedChats])
 
   // Reload bookmarks after actions
   const reloadBookmarks = useCallback(async () => {
@@ -79,8 +179,23 @@ export function Command() {
     if (!query || loading) return
 
     setInput('')
-    const userMsg: ChatMessage = { role: 'user', content: query }
-    setMessages(prev => [...prev, userMsg])
+    const currentChatId = activeChatId || `chat-${Date.now()}`
+    if (!activeChatId) {
+      setActiveChatId(currentChatId)
+    }
+
+    const userMessageId = `user-${Date.now()}`
+    const assistantMessageId = `assistant-${Date.now()}`
+    const userMsg: ChatMessage = { id: userMessageId, role: 'user', content: query }
+    const assistantMsg: ChatMessage = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: 'Thinking…',
+      streaming: true,
+      rawContent: '',
+    }
+
+    setMessages(prev => [...prev, userMsg, assistantMsg])
     setLoading(true)
 
     try {
@@ -92,23 +207,75 @@ export function Command() {
           : m.content,
       }))
 
-      const response = await queryAI(query, bookmarkTree, history)
+      const response = await streamAI(query, bookmarkTree, history, {
+        onMessage: (content, rawContent) => {
+          setMessages(prev => prev.map((message) =>
+            message.id === assistantMessageId
+              ? {
+                  ...message,
+                  content: content || 'Thinking…',
+                  rawContent,
+                  streaming: true,
+                }
+              : message
+          ))
+        },
+      })
 
-      const assistantMsg: ChatMessage = {
-        role: 'assistant',
-        content: response.message,
-        response,
-      }
-      setMessages(prev => [...prev, assistantMsg])
+      setMessages(prev => prev.map((message) =>
+        message.id === assistantMessageId
+          ? {
+              ...message,
+              content: response.message || message.content,
+              response,
+              streaming: false,
+              rawContent: undefined,
+            }
+          : message
+      ))
     } catch (err) {
-      const errorMsg: ChatMessage = {
-        role: 'assistant',
-        content: err instanceof Error ? err.message : 'Something went wrong.',
-      }
-      setMessages(prev => [...prev, errorMsg])
+      setMessages(prev => prev.map((message) =>
+        message.id === assistantMessageId
+          ? {
+              ...message,
+              content: err instanceof Error ? err.message : 'Something went wrong.',
+              streaming: false,
+              rawContent: undefined,
+            }
+          : message
+      ))
     } finally {
       setLoading(false)
       inputRef.current?.focus()
+    }
+  }
+
+  const handleStartNewChat = () => {
+    setMessages([])
+    setActiveChatId(null)
+    setInput('')
+    setShowChatPicker(false)
+    inputRef.current?.focus()
+  }
+
+  const handleSelectChat = (chatId: string) => {
+    const selectedChat = savedChats.find((chat) => chat.id === chatId)
+    if (!selectedChat) return
+
+    setActiveChatId(selectedChat.id)
+    setMessages(sanitizeChatMessages(selectedChat.messages))
+    setShowChatPicker(false)
+    setInput('')
+    inputRef.current?.focus()
+  }
+
+  const handleDeleteChat = (chatId: string) => {
+    setSavedChats((prev) => prev.filter((chat) => chat.id !== chatId))
+
+    if (activeChatId === chatId) {
+      setActiveChatId(null)
+      setMessages([])
+      setInput('')
     }
   }
 
@@ -145,6 +312,15 @@ export function Command() {
 
   const hasExecutableActions = (actions: AIAction[]) =>
     actions.some(a => a.type !== 'search_results')
+
+  const toggleExpandedActions = (messageId: string) => {
+    setExpandedActionMessageIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(messageId)) next.delete(messageId)
+      else next.add(messageId)
+      return next
+    })
+  }
 
   // API key setup screen
   if (hasApiKey === false) {
@@ -212,6 +388,58 @@ export function Command() {
           <div className="flex items-center gap-2">
             <div className="relative">
               <button
+                onClick={() => setShowChatPicker(!showChatPicker)}
+                className="text-xs text-gray-400 hover:text-gray-200 px-2.5 py-1 rounded border border-gray-800 hover:border-gray-700 hover:bg-gray-800 transition-colors"
+              >
+                Chats
+              </button>
+              {showChatPicker && (
+                <div className="absolute right-0 top-full mt-1 w-72 bg-gray-900 border border-gray-700 rounded-xl shadow-xl z-50 overflow-hidden">
+                  <div className="px-3 py-2 border-b border-gray-800 flex items-center justify-between">
+                    <p className="text-xs font-medium text-gray-200">Saved Chats</p>
+                    <span className="text-[10px] text-gray-500">{savedChats.length}</span>
+                  </div>
+                  <div className="max-h-72 overflow-y-auto py-1">
+                    {savedChats.length === 0 ? (
+                      <p className="px-3 py-3 text-xs text-gray-500">
+                        No saved chats yet. Start a conversation and it will show up here.
+                      </p>
+                    ) : (
+                      savedChats.map((chat) => (
+                        <div key={chat.id} className="flex items-center gap-2 px-2 py-1">
+                          <button
+                            onClick={() => handleSelectChat(chat.id)}
+                            className={cn(
+                              'flex-1 text-left px-2.5 py-2 rounded-lg hover:bg-gray-800 transition-colors',
+                              activeChatId === chat.id && 'bg-gray-800'
+                            )}
+                          >
+                            <p className="text-xs font-medium text-gray-200 truncate">{chat.title}</p>
+                            <p className="text-[10px] text-gray-500 mt-0.5">
+                              {formatRelativeDate(chat.updatedAt)} • {chat.messages.length} messages
+                            </p>
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleDeleteChat(chat.id)
+                            }}
+                            className="p-1 text-gray-500 hover:text-gray-300 transition-colors"
+                            title="Delete chat"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="relative">
+              <button
                 onClick={() => setShowModelPicker(!showModelPicker)}
                 className="text-[11px] px-2.5 py-1 rounded-full bg-emerald-900/30 text-emerald-400 border border-emerald-900/30 hover:bg-emerald-900/50 transition-colors flex items-center gap-1"
               >
@@ -257,10 +485,10 @@ export function Command() {
               Key
             </button>
             <button
-              onClick={() => { setMessages([]); inputRef.current?.focus() }}
+              onClick={handleStartNewChat}
               className="text-xs text-gray-500 hover:text-gray-300 px-2 py-1 rounded hover:bg-gray-800 transition-colors"
             >
-              Clear
+              New Chat
             </button>
           </div>
         </div>
@@ -298,7 +526,7 @@ export function Command() {
         )}
 
         {messages.map((msg, i) => (
-          <div key={i} className={cn('flex', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
+          <div key={msg.id} className={cn('flex', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
             <div className={cn(
               'max-w-[85%] rounded-2xl px-4 py-3',
               msg.role === 'user'
@@ -306,7 +534,12 @@ export function Command() {
                 : 'bg-gray-900 border border-gray-800 text-gray-200'
             )}>
               {/* Message text */}
-              <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                {msg.content}
+                {msg.streaming && (
+                  <span className="inline-block w-2 h-4 ml-1 align-[-2px] bg-indigo-400/70 animate-pulse rounded-sm" />
+                )}
+              </p>
 
               {/* Search results */}
               {msg.response?.searchResults && msg.response.searchResults.length > 0 && (
@@ -352,6 +585,13 @@ export function Command() {
               {/* Pending actions */}
               {msg.response && hasExecutableActions(msg.response.actions) && !msg.executionResult && (
                 <div className="mt-3 pt-3 border-t border-gray-800">
+                  {(() => {
+                    const executableActions = msg.response.actions.filter(a => a.type !== 'search_results')
+                    const isExpanded = expandedActionMessageIds.has(msg.id)
+                    const visibleActions = isExpanded ? executableActions : executableActions.slice(0, 8)
+
+                    return (
+                      <>
                   <div className="flex items-center justify-between">
                     <p className="text-xs text-gray-500">
                       Pending: {getActionSummary(msg.response.actions)}
@@ -379,7 +619,7 @@ export function Command() {
 
                   {/* Action preview */}
                   <div className="mt-2 space-y-1">
-                    {msg.response.actions.filter(a => a.type !== 'search_results').slice(0, 8).map((action, j) => (
+                    {visibleActions.map((action, j) => (
                       <div key={j} className="flex items-center gap-2 text-[11px] text-gray-500">
                         <span className={cn(
                           'px-1.5 py-0.5 rounded font-mono',
@@ -409,12 +649,20 @@ export function Command() {
                         </span>
                       </div>
                     ))}
-                    {msg.response.actions.filter(a => a.type !== 'search_results').length > 8 && (
-                      <p className="text-[10px] text-gray-600">
-                        +{msg.response.actions.filter(a => a.type !== 'search_results').length - 8} more actions
-                      </p>
+                    {executableActions.length > 8 && (
+                      <button
+                        onClick={() => toggleExpandedActions(msg.id)}
+                        className="text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors"
+                      >
+                        {isExpanded
+                          ? 'Show fewer actions'
+                          : `Show all ${executableActions.length} actions`}
+                      </button>
                     )}
                   </div>
+                      </>
+                    )
+                  })()}
                 </div>
               )}
 
@@ -448,7 +696,7 @@ export function Command() {
           </div>
         ))}
 
-        {loading && (
+        {loading && !messages.some((message) => message.streaming) && (
           <div className="flex justify-start">
             <div className="bg-gray-900 border border-gray-800 rounded-2xl px-4 py-3">
               <div className="flex items-center gap-2">

@@ -199,9 +199,13 @@ export function BookmarkTree() {
           <div className="flex gap-2">
             <button
               onClick={() => setCreatingFolder(true)}
-              className="px-3 py-1.5 text-sm text-gray-300 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg transition-colors"
+              className="px-3 py-1.5 text-sm text-gray-300 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg transition-colors inline-flex items-center gap-1.5"
             >
-              + New Folder
+              <svg className="w-4 h-4 text-indigo-400" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v1h-2V8H4v8h5v2H4a2 2 0 01-2-2V6z" />
+                <path d="M14 11V8h2v3h3v2h-3v3h-2v-3h-3v-2h3z" />
+              </svg>
+              New Folder
             </button>
             <button
               onClick={() => void loadBookmarks(true)}

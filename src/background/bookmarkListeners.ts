@@ -1,3 +1,18 @@
+import { recordDeletedBookmark } from '../lib/deletedBookmarkService'
+
+const suppressedRemovedIds = new Set<string>()
+
+function collectDescendantIds(node?: chrome.bookmarks.BookmarkTreeNode): string[] {
+  if (!node?.children?.length) return []
+
+  const ids: string[] = []
+  for (const child of node.children) {
+    ids.push(child.id)
+    ids.push(...collectDescendantIds(child))
+  }
+  return ids
+}
+
 export function setupBookmarkListeners() {
   chrome.bookmarks.onCreated.addListener((id, bookmark) => {
     console.log('[Bookmarks] Created:', id, bookmark.title)
@@ -16,6 +31,23 @@ export function setupBookmarkListeners() {
 
   chrome.bookmarks.onRemoved.addListener((id, removeInfo) => {
     console.log('[Bookmarks] Removed:', id)
+
+    if (suppressedRemovedIds.has(id)) {
+      suppressedRemovedIds.delete(id)
+      return
+    }
+
+    if (removeInfo.node) {
+      const descendantIds = collectDescendantIds(removeInfo.node)
+      for (const descendantId of descendantIds) {
+        suppressedRemovedIds.add(descendantId)
+      }
+
+      recordDeletedBookmark(id, removeInfo.node).catch((err) => {
+        console.error('[Bookmarks] Failed to record deleted bookmark:', err)
+      })
+    }
+
     chrome.runtime.sendMessage({
       type: 'BOOKMARK_REMOVED',
       payload: { id, removeInfo },

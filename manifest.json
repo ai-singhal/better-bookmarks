@@ -9,12 +9,10 @@
     "storage",
     "alarms",
     "notifications",
-    "identity",
     "contextMenus",
     "activeTab"
   ],
   "host_permissions": [
-    "https://*.supabase.co/*",
     "https://*/*",
     "http://*/*"
   ],

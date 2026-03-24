@@ -2,14 +2,12 @@ import { useState, useEffect } from 'react'
 import { DEFAULT_OPENAI_MODEL, OPENAI_MODELS } from '../../lib/openaiService'
 
 interface SettingsState {
-  autoSummarize: boolean
   showNotifications: boolean
   openaiApiKey: string
   openaiModel: string
 }
 
 const defaultSettings: SettingsState = {
-  autoSummarize: true,
   showNotifications: true,
   openaiApiKey: '',
   openaiModel: DEFAULT_OPENAI_MODEL,
@@ -58,25 +56,6 @@ export function Settings() {
           <section>
             <h3 className="text-sm font-medium text-gray-300 mb-3">General</h3>
             <div className="space-y-3">
-              <label className="flex items-center justify-between p-3 rounded-lg bg-gray-900/50 border border-gray-800">
-                <div>
-                  <p className="text-sm text-gray-200">
-                    Auto-summarize new bookmarks
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    Generate AI summaries when you add a bookmark
-                  </p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={settings.autoSummarize}
-                  onChange={(e) =>
-                    updateSetting('autoSummarize', e.target.checked)
-                  }
-                  className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-indigo-600 focus:ring-indigo-500"
-                />
-              </label>
-
               <label className="flex items-center justify-between p-3 rounded-lg bg-gray-900/50 border border-gray-800">
                 <div>
                   <p className="text-sm text-gray-200">Show notifications</p>

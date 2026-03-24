@@ -1,6 +1,5 @@
 import { ALARM_NAMES } from '../shared/constants'
 import type { BookmarkReminderRecord } from '../shared/types'
-import { setLookAtLater } from './bookmarkSync'
 import { upsertBookmarkInsight } from './bookmarkInsightService'
 
 function getReminderStorageKey(bookmarkId: string): string {
@@ -50,12 +49,9 @@ export async function createReminder(
     reminderNote: record.note,
     recurring: record.recurring,
   })
-
-  // Update Supabase
-  await setLookAtLater(url, true, remindAt.toISOString(), note)
 }
 
-export async function cancelReminder(bookmarkId: string, url: string): Promise<void> {
+export async function cancelReminder(bookmarkId: string, _url: string): Promise<void> {
   const alarmName = `${ALARM_NAMES.REMINDER_PREFIX}${bookmarkId}`
 
   await chrome.alarms.clear(alarmName)
@@ -65,7 +61,6 @@ export async function cancelReminder(bookmarkId: string, url: string): Promise<v
     reminderNote: undefined,
     recurring: null,
   })
-  await setLookAtLater(url, false)
 }
 
 export async function snoozeReminder(

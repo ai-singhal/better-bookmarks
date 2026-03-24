@@ -1,8 +1,24 @@
 # Better Bookmarks
 
-Better Bookmarks is a Chrome extension for people whose bookmark bar turned into a storage unit.
+<p align="center">
+  <img src="public/favicon.svg" alt="Better Bookmarks logo" width="128" />
+</p>
 
-Chrome lets you save links. It does not help much with remembering why you saved them, reviewing them later, or cleaning up the pile once it gets large. This project turns bookmarks into a workspace: a proper tree view, quick search, reminder tracking, a review queue, and an optional AI command layer for bulk actions.
+<p align="center">
+  <strong>The bookmark manager for people who save everything and find nothing.</strong>
+</p>
+
+<p align="center">
+  Local-first bookmark triage, cleanup, reminders, and AI-powered organization for Chrome.
+</p>
+
+<p align="center">
+  Made with obsessive bookmark hoarder energy by <a href="https://x.com/ai_singhal">@ai_singhal</a>
+</p>
+
+I built Better Bookmarks because I was tired of searching through my 500+ bookmarks to find one research paper I bookmarked 2 years ago. It was such a frustrating experience. I knew I had saved the link, but I couldn't remember why I saved it or where it was in my massive list of bookmarks.
+
+Better Bookmarks is a Chrome extension for people whose bookmark bar turned into a Public Storage rental unit. It's designed to help you quickly find the bookmarks you need, without having to manually search through hundreds of links.
 
 The core experience is local-first. Your bookmark tree lives in Chrome, your extension metadata lives in Chrome storage, and the extension is useful before you configure any external service.
 
@@ -43,9 +59,7 @@ Out of the box, the project already supports:
 - quick popup search with a fallback to Chrome's native bookmark search
 - fetching bookmarked page content to improve local context and summaries
 
-## Optional AI Layer
-
-The AI features are intentionally additive, not the foundation of the whole app.
+## AI Layer
 
 The current command workflow:
 
@@ -57,7 +71,47 @@ The current command workflow:
 
 The AI Chat page uses your chosen OpenAI text model directly from the extension. The default is `gpt-5.4-mini`, and the picker is curated to current relevant API text models for this workflow. The API key is stored in Chrome sync storage and sent only to OpenAI when you use that feature.
 
-The repo also includes early Supabase migrations and edge functions for future cloud-backed search, embeddings, summaries, and organization suggestions. That path is not fully wired into the live dashboard flow yet, so this repository should be understood as a solid local product with some backend scaffolding still in progress.
+## How To Install And Run
+
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Build the extension:
+
+```bash
+npm run build
+```
+
+3. Open Chrome and go to `chrome://extensions`.
+4. Enable `Developer mode`.
+5. Click `Load unpacked`.
+6. Select the generated `dist` folder from this project.
+
+If you are iterating locally, rebuild with `npm run build` after code changes and click the extension reload button in `chrome://extensions`.
+
+## How To Use The Extension
+
+After loading the extension, Better Bookmarks opens the dashboard on first install. You can also open the popup from the Chrome toolbar at any time.
+
+- Use the popup when you want the fastest path to recent bookmarks and quick search.
+- Use `Bookmarks` to browse your full bookmark tree, create folders, move items around, and clean up structure directly.
+- Use `Discover` to review bookmarks one at a time, add notes or tags, and decide what to keep or delete.
+- Use `Reminders` to schedule follow-ups for links you want to revisit later.
+- Use `Organize` to review suggestions based on your current bookmark tree and recent Chrome history.
+- Use `Settings` to configure extension preferences and add an OpenAI API key if you want AI-powered actions.
+- Use `AI Chat` after adding your API key if you want to search, rename, move, or create bookmark structures from natural-language prompts.
+
+## Typical Workflow
+
+1. Load the extension and let it read your existing bookmark tree.
+2. Open `Bookmarks` to understand your current folder structure.
+3. Use `Discover` to annotate high-value bookmarks with notes and tags.
+4. Use `Organize` to review suggested cleanup and folder changes.
+5. Add an OpenAI API key in `Settings` if you want to use `AI Chat`.
+6. Use `Reminders` for links that should come back into your attention later.
 
 ## Tech Stack
 
@@ -68,104 +122,13 @@ The repo also includes early Supabase migrations and edge functions for future c
 - `@crxjs/vite-plugin`
 - Zustand
 - Tailwind CSS v4
-- Supabase edge-function scaffolding for future hosted features
 
-## Project Layout
+---
 
-```text
-src/
-  background/   service worker, alarms, bookmark listeners, message routing
-  popup/        compact popup UI for quick access
-  dashboard/    full-page extension app
-  lib/          search, parsing, reminders, AI helpers, sync experiments
-  shared/       shared types, store, Chrome API helpers, utilities
-  content/      content script entry
-supabase/
-  migrations/   database schema for experimental hosted features
-  functions/    edge functions for embeddings, summaries, search, organization
-```
+<p align="center">
+  Built for people with 5,000 bookmarks saved and absolutely no intention of becoming more organized without help.
+</p>
 
-## Getting Started
-
-### 1. Install dependencies
-
-```bash
-npm install
-```
-
-### 2. Build the extension
-
-```bash
-npm run build
-```
-
-### 3. Load it into Chrome
-
-1. Open `chrome://extensions`
-2. Turn on `Developer mode`
-3. Click `Load unpacked`
-4. Select the generated `dist/` directory
-
-If you are iterating on the code, rebuild and reload the unpacked extension after changes.
-
-## Development
-
-```bash
-npm run dev
-npm run build
-npm run lint
-```
-
-The repo is built with Vite and CRXJS. In practice, the most reliable workflow is:
-
-1. run `npm run build`
-2. reload the extension in `chrome://extensions`
-3. re-open the popup or dashboard
-
-## Privacy And External Services
-
-The local bookmark management features do not require an external backend.
-
-Some features do make network requests:
-
-- The AI Chat page calls the OpenAI API if you configure an API key.
-- Page parsing and summary extraction may use Jina Reader to pull readable page content from bookmarked URLs.
-- The repo includes Supabase modules and edge functions, but they are not the primary path for the current UI.
-
-The extension requests broad host permissions because it can fetch bookmarked pages for indexing and context extraction.
-
-## Permissions
-
-The extension currently requests:
-
-- `bookmarks` to read and mutate the bookmark tree
-- `history` to analyze recent browsing patterns and suggest bookmark/folder changes
-- `storage` to persist settings, notes, reminders, and local metadata
-- `alarms` and `notifications` for reminder delivery
-- `activeTab` plus broad host permissions for page fetching and parsing
-- `identity` and `contextMenus` for future integration work
-
-## Known Limitations
-
-- The Supabase-backed path is incomplete and should be treated as experimental.
-- The Command experience depends on the quality of model output, so bulk actions should still be reviewed before you trust them blindly.
-- The extension is Chrome-first; other Chromium browsers may work, but that is not the primary target.
-
-## Why This Exists
-
-This project is built around a simple assumption: saved links are only useful if you can get back to them with context.
-
-Most bookmark tools optimize for saving faster. Better Bookmarks is more interested in the second half of the problem: review, recall, cleanup, and rediscovery.
-
-## Contributing
-
-Issues and pull requests are welcome. If you want to contribute, the most useful areas right now are:
-
-- hardening the Command action pipeline
-- improving local search and indexing quality
-- tightening the permissions and privacy model
-- finishing or removing half-wired backend flows so the product surface is clearer
-
-## License
-
-This project is licensed under the MIT License. See [LICENSE](./LICENSE).
+<p align="center">
+  made with love by <a href="https://x.com/ai_singhal">@ai_singhal</a>
+</p>

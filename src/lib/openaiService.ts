@@ -66,6 +66,10 @@ export interface AIResponse {
   searchResults?: Array<{ bookmarkId: string; reason: string }>
 }
 
+interface AIStreamCallbacks {
+  onMessage?: (displayContent: string, rawContent: string) => void
+}
+
 // ─── API Key Management ───
 
 export async function getOpenAIKey(): Promise<string> {
@@ -170,6 +174,89 @@ Rules:
 - Be concise but helpful in your message`
 }
 
+function parseAIResponseContent(content: string): AIResponse {
+  try {
+    const cleaned = content.replace(/^```(?:json)?\s*/m, '').replace(/\s*```$/m, '').trim()
+    const parsed = JSON.parse(cleaned) as AIResponse
+    return {
+      message: parsed.message || '',
+      actions: parsed.actions || [],
+      searchResults: parsed.searchResults,
+    }
+  } catch {
+    return {
+      message: content,
+      actions: [],
+    }
+  }
+}
+
+function extractMessagePreview(content: string): string {
+  const messageKeyMatch = /"message"\s*:\s*"/.exec(content)
+  if (!messageKeyMatch) {
+    return content.trim()
+  }
+
+  let value = ''
+  let escaped = false
+
+  for (let i = messageKeyMatch.index + messageKeyMatch[0].length; i < content.length; i++) {
+    const char = content[i]
+
+    if (escaped) {
+      switch (char) {
+        case 'n':
+          value += '\n'
+          break
+        case 'r':
+          break
+        case 't':
+          value += '\t'
+          break
+        case '"':
+        case '\\':
+        case '/':
+          value += char
+          break
+        default:
+          value += char
+          break
+      }
+      escaped = false
+      continue
+    }
+
+    if (char === '\\') {
+      escaped = true
+      continue
+    }
+
+    if (char === '"') {
+      break
+    }
+
+    value += char
+  }
+
+  return value.trim()
+}
+
+function readDeltaText(delta: unknown): string {
+  if (typeof delta === 'string') return delta
+
+  if (Array.isArray(delta)) {
+    return delta.map((part) => {
+      if (typeof part === 'string') return part
+      if (part && typeof part === 'object' && 'text' in part) {
+        return String(part.text || '')
+      }
+      return ''
+    }).join('')
+  }
+
+  return ''
+}
+
 // ─── API Call ───
 
 export async function queryAI(
@@ -219,22 +306,104 @@ export async function queryAI(
   const data = await response.json()
   const content = data.choices?.[0]?.message?.content || ''
 
-  try {
-    // Strip markdown code fences if present
-    const cleaned = content.replace(/^```(?:json)?\s*/m, '').replace(/\s*```$/m, '').trim()
-    const parsed = JSON.parse(cleaned) as AIResponse
-    return {
-      message: parsed.message || '',
-      actions: parsed.actions || [],
-      searchResults: parsed.searchResults,
-    }
-  } catch {
-    // If JSON parsing fails, treat as a plain text response
-    return {
-      message: content,
-      actions: [],
-    }
+  return parseAIResponseContent(content)
+}
+
+export async function streamAI(
+  prompt: string,
+  bookmarkTree: BookmarkWithMetadata[],
+  conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [],
+  callbacks: AIStreamCallbacks = {}
+): Promise<AIResponse> {
+  const apiKey = await getOpenAIKey()
+  if (!apiKey) {
+    throw new Error('OpenAI API key not configured. Add it in the settings below.')
   }
+
+  const rootChildren = bookmarkTree[0]?.children || bookmarkTree
+  const serialized = serializeBookmarkTree(rootChildren)
+  const systemPrompt = buildSystemPrompt(serialized)
+  const selectedModel = await getOpenAIModel()
+
+  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+    { role: 'system', content: systemPrompt },
+    ...conversationHistory.map((message) => ({
+      role: message.role as 'user' | 'assistant',
+      content: message.content,
+    })),
+    { role: 'user', content: prompt },
+  ]
+
+  const response = await fetch(OPENAI_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: selectedModel,
+      messages,
+      temperature: 0.1,
+      max_completion_tokens: 4096,
+      stream: true,
+    }),
+  })
+
+  if (!response.ok) {
+    const err = await response.text()
+    if (response.status === 401) {
+      throw new Error('Invalid OpenAI API key. Check your key in settings.')
+    }
+    throw new Error(`OpenAI API error (${response.status}): ${err}`)
+  }
+
+  if (!response.body) {
+    return queryAI(prompt, bookmarkTree, conversationHistory)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let sseBuffer = ''
+  let rawContent = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    sseBuffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+
+    let eventBoundary = sseBuffer.indexOf('\n\n')
+    while (eventBoundary !== -1) {
+      const rawEvent = sseBuffer.slice(0, eventBoundary)
+      sseBuffer = sseBuffer.slice(eventBoundary + 2)
+
+      for (const line of rawEvent.split('\n')) {
+        if (!line.startsWith('data:')) continue
+
+        const data = line.slice(5).trim()
+        if (!data) continue
+        if (data === '[DONE]') continue
+
+        try {
+          const chunk = JSON.parse(data)
+          const deltaText = readDeltaText(chunk.choices?.[0]?.delta?.content)
+          if (!deltaText) continue
+
+          rawContent += deltaText
+          const preview = extractMessagePreview(rawContent)
+          callbacks.onMessage?.(preview || rawContent, rawContent)
+        } catch (err) {
+          console.warn('Failed to parse streaming OpenAI chunk:', err)
+        }
+      }
+
+      eventBoundary = sseBuffer.indexOf('\n\n')
+    }
+
+    if (done) break
+  }
+
+  const parsed = parseAIResponseContent(rawContent)
+  callbacks.onMessage?.(parsed.message || extractMessagePreview(rawContent) || rawContent, rawContent)
+  return parsed
 }
 
 // ─── Action Execution ───

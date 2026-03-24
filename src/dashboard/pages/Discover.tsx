@@ -9,6 +9,7 @@ import {
   upsertFolderDescription,
 } from '../../lib/bookmarkInsightService'
 import { fetchPageWithJina, extractSummary } from '../../lib/jinaService'
+import { getOpenAIKey, streamAI, executeActions, type AIAction, type AIResponse } from '../../lib/openaiService'
 import type { BookmarkWithMetadata, TriageStatus, FolderDescription } from '../../shared/types'
 import { cn, getFaviconUrl, formatRelativeDate, truncateUrl } from '../../shared/utils'
 
@@ -19,6 +20,58 @@ interface FolderOption {
   title: string
   path: string
   count: number
+}
+
+interface DiscoverAiMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  response?: AIResponse
+  executionResult?: { success: number; failed: number; errors: string[] }
+  executing?: boolean
+  streaming?: boolean
+  rawContent?: string
+}
+
+function buildDiscoverAIPrompt(
+  bookmark: BookmarkWithMetadata,
+  userQuery: string,
+  options: {
+    folderName?: string
+    note?: string
+    pageSummary?: string | null
+  }
+): string {
+  return `You are helping from the Discover page with one specific bookmark. Focus on this bookmark unless the user explicitly asks you to work across other bookmarks or folders.
+
+Current bookmark:
+- Bookmark ID: ${bookmark.id}
+- Title: ${bookmark.title || 'Untitled'}
+- URL: ${bookmark.url || 'N/A'}
+- Current folder: ${options.folderName || 'Unknown'}
+- Saved note: ${options.note?.trim() || 'None'}
+- Page summary: ${options.pageSummary?.trim() || 'Unavailable'}
+
+When the user asks you to change something, prefer actions that operate on this bookmark.
+
+User request:
+${userQuery}`
+}
+
+function hasExecutableActions(actions: AIAction[]): boolean {
+  return actions.some((action) => action.type !== 'search_results')
+}
+
+function getActionSummary(actions: AIAction[]): string {
+  const counts: Record<string, number> = {}
+  for (const action of actions) {
+    if (action.type === 'search_results') continue
+    counts[action.type] = (counts[action.type] || 0) + 1
+  }
+
+  return Object.entries(counts)
+    .map(([type, count]) => `${count} ${type}${count > 1 ? 's' : ''}`)
+    .join(', ')
 }
 
 function buildFolderOptions(nodes: BookmarkWithMetadata[], path = ''): FolderOption[] {
@@ -37,6 +90,7 @@ function buildFolderOptions(nodes: BookmarkWithMetadata[], path = ''): FolderOpt
 }
 
 export function Discover() {
+  const [bookmarkTree, setBookmarkTree] = useState<BookmarkWithMetadata[]>([])
   const [allBookmarks, setAllBookmarks] = useState<BookmarkWithMetadata[]>([])
   const [filteredBookmarks, setFilteredBookmarks] = useState<BookmarkWithMetadata[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
@@ -47,6 +101,11 @@ export function Discover() {
   const [folderOptions, setFolderOptions] = useState<FolderOption[]>([])
   const [folderDescriptions, setFolderDescriptions] = useState<Record<string, FolderDescription>>({})
   const [showFolderPanel, setShowFolderPanel] = useState(false)
+  const [hasAiKey, setHasAiKey] = useState<boolean | null>(null)
+  const [aiInput, setAiInput] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiThreads, setAiThreads] = useState<Record<string, DiscoverAiMessage[]>>({})
+  const [expandedAiActionMessageIds, setExpandedAiActionMessageIds] = useState<Set<string>>(new Set())
 
   // Card state
   const [pageSummary, setPageSummary] = useState<string | null>(null)
@@ -54,6 +113,8 @@ export function Discover() {
   const [noteInput, setNoteInput] = useState('')
   const [showNoteInput, setShowNoteInput] = useState(false)
   const [tagInput, setTagInput] = useState('')
+  const [renameInput, setRenameInput] = useState('')
+  const [isRenamingBookmark, setIsRenamingBookmark] = useState(false)
   const [currentInsight, setCurrentInsight] = useState<{ reason: string; tags: string[] } | null>(null)
   const [animDirection, setAnimDirection] = useState<'left' | 'right' | 'up' | null>(null)
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null)
@@ -62,6 +123,8 @@ export function Discover() {
   const currentBookmark = filteredBookmarks[currentIndex] || null
 
   const cardRef = useRef<HTMLDivElement>(null)
+  const renameInputRef = useRef<HTMLInputElement>(null)
+  const aiScrollRef = useRef<HTMLDivElement>(null)
   const summaryCache = useRef<Map<string, string>>(new Map())
   const currentBookmarkIdRef = useRef<string | null>(null)
   const currentIndexRef = useRef(0)
@@ -73,17 +136,44 @@ export function Discover() {
   }, [currentBookmark?.id])
 
   useEffect(() => {
+    setIsRenamingBookmark(false)
+    setRenameInput(currentBookmark?.title || '')
+  }, [currentBookmark?.id, currentBookmark?.title])
+
+  useEffect(() => {
+    if (isRenamingBookmark) {
+      renameInputRef.current?.focus()
+      renameInputRef.current?.select()
+    }
+  }, [isRenamingBookmark])
+
+  useEffect(() => {
+    setAiInput('')
+  }, [currentBookmark?.id])
+
+  useEffect(() => {
     currentIndexRef.current = currentIndex
   }, [currentIndex])
+
+  const currentAiMessages = currentBookmark ? (aiThreads[currentBookmark.id] || []) : []
+
+  useEffect(() => {
+    aiScrollRef.current?.scrollTo({ top: aiScrollRef.current.scrollHeight, behavior: 'smooth' })
+  }, [currentAiMessages])
+
+  const reloadBookmarkSnapshot = useCallback(async () => {
+    const tree = await getBookmarkTree()
+    setBookmarkTree(tree)
+    const flat = flattenBookmarks(tree)
+    setAllBookmarks(flat)
+    setFolderOptions(buildFolderOptions(tree[0]?.children || []))
+  }, [])
 
   // Load everything
   useEffect(() => {
     async function load() {
       setLoading(true)
-      const tree = await getBookmarkTree()
-      const flat = flattenBookmarks(tree)
-      setAllBookmarks(flat)
-      setFolderOptions(buildFolderOptions(tree[0]?.children || []))
+      await reloadBookmarkSnapshot()
 
       const triage = await getTriageRecords()
       const mapped: Record<string, { status: TriageStatus }> = {}
@@ -96,10 +186,24 @@ export function Discover() {
 
       const fDescs = await getFolderDescriptions()
       setFolderDescriptions(fDescs)
+
+      const key = await getOpenAIKey()
+      setHasAiKey(!!key)
       setLoading(false)
     }
     load()
-  }, [])
+  }, [reloadBookmarkSnapshot])
+
+  useEffect(() => {
+    const listener = (message: { type: string }) => {
+      if (message.type.startsWith('BOOKMARK_')) {
+        void reloadBookmarkSnapshot()
+      }
+    }
+
+    chrome.runtime.onMessage.addListener(listener)
+    return () => chrome.runtime.onMessage.removeListener(listener)
+  }, [reloadBookmarkSnapshot])
 
   // Filter bookmarks
   useEffect(() => {
@@ -258,6 +362,174 @@ export function Discover() {
     setShowNoteInput(false)
   }, [currentBookmark, noteInput])
 
+  const handleSaveRename = useCallback(async () => {
+    if (!currentBookmark) return
+
+    const trimmed = renameInput.trim()
+    if (!trimmed) {
+      setRenameInput(currentBookmark.title || '')
+      setIsRenamingBookmark(false)
+      return
+    }
+
+    if (trimmed === currentBookmark.title) {
+      setIsRenamingBookmark(false)
+      return
+    }
+
+    try {
+      await chrome.bookmarks.update(currentBookmark.id, { title: trimmed })
+      setAllBookmarks((prev) => prev.map((bookmark) => (
+        bookmark.id === currentBookmark.id
+          ? { ...bookmark, title: trimmed }
+          : bookmark
+      )))
+      setIsRenamingBookmark(false)
+    } catch (err) {
+      console.error('Rename failed:', err)
+      setRenameInput(currentBookmark.title || '')
+      setIsRenamingBookmark(false)
+    }
+  }, [currentBookmark, renameInput])
+
+  const handleAskBookmarkAI = useCallback(async () => {
+    const query = aiInput.trim()
+    if (!currentBookmark || !query || aiLoading) return
+
+    const bookmarkId = currentBookmark.id
+    const userMessageId = `discover-ai-user-${Date.now()}`
+    const assistantMessageId = `discover-ai-assistant-${Date.now()}`
+    const folderName = currentBookmark.parentId
+      ? folderOptions.find((folder) => folder.id === currentBookmark.parentId)?.title || 'Bookmarks'
+      : 'Bookmarks'
+    const prompt = buildDiscoverAIPrompt(currentBookmark, query, {
+      folderName,
+      note: currentInsight?.reason,
+      pageSummary,
+    })
+
+    const existingThread = aiThreads[bookmarkId] || []
+    const history = existingThread.slice(-6).map((message) => ({
+      role: message.role,
+      content: message.role === 'assistant' && message.response
+        ? message.response.message
+        : message.content,
+    }))
+
+    const userMessage: DiscoverAiMessage = {
+      id: userMessageId,
+      role: 'user',
+      content: query,
+    }
+
+    const assistantMessage: DiscoverAiMessage = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: 'Thinking…',
+      streaming: true,
+      rawContent: '',
+    }
+
+    setAiInput('')
+    setAiLoading(true)
+    setAiThreads((prev) => ({
+      ...prev,
+      [bookmarkId]: [...(prev[bookmarkId] || []), userMessage, assistantMessage],
+    }))
+
+    try {
+      const response = await streamAI(prompt, bookmarkTree, history, {
+        onMessage: (content, rawContent) => {
+          setAiThreads((prev) => ({
+            ...prev,
+            [bookmarkId]: (prev[bookmarkId] || []).map((message) => (
+              message.id === assistantMessageId
+                ? {
+                    ...message,
+                    content: content || 'Thinking…',
+                    rawContent,
+                    streaming: true,
+                  }
+                : message
+            )),
+          }))
+        },
+      })
+
+      setAiThreads((prev) => ({
+        ...prev,
+        [bookmarkId]: (prev[bookmarkId] || []).map((message) => (
+          message.id === assistantMessageId
+            ? {
+                ...message,
+                content: response.message || message.content,
+                response,
+                streaming: false,
+                rawContent: undefined,
+              }
+            : message
+        )),
+      }))
+    } catch (err) {
+      setAiThreads((prev) => ({
+        ...prev,
+        [bookmarkId]: (prev[bookmarkId] || []).map((message) => (
+          message.id === assistantMessageId
+            ? {
+                ...message,
+                content: err instanceof Error ? err.message : 'Something went wrong.',
+                streaming: false,
+                rawContent: undefined,
+              }
+            : message
+        )),
+      }))
+    } finally {
+      setAiLoading(false)
+    }
+  }, [aiInput, aiLoading, aiThreads, bookmarkTree, currentBookmark, currentInsight?.reason, folderOptions, pageSummary])
+
+  const handleExecuteAiActions = useCallback(async (messageId: string) => {
+    if (!currentBookmark) return
+
+    const thread = aiThreads[currentBookmark.id] || []
+    const targetMessage = thread.find((message) => message.id === messageId)
+    if (!targetMessage?.response?.actions?.length) return
+
+    const executableActions = targetMessage.response.actions.filter((action) => action.type !== 'search_results')
+    if (executableActions.length === 0) return
+
+    setAiThreads((prev) => ({
+      ...prev,
+      [currentBookmark.id]: (prev[currentBookmark.id] || []).map((message) => (
+        message.id === messageId
+          ? { ...message, executing: true }
+          : message
+      )),
+    }))
+
+    const result = await executeActions(executableActions)
+    await reloadBookmarkSnapshot()
+
+    setAiThreads((prev) => ({
+      ...prev,
+      [currentBookmark.id]: (prev[currentBookmark.id] || []).map((message) => (
+        message.id === messageId
+          ? { ...message, executing: false, executionResult: result }
+          : message
+      )),
+    }))
+  }, [aiThreads, currentBookmark, reloadBookmarkSnapshot])
+
+  const toggleExpandedAiActions = useCallback((messageId: string) => {
+    setExpandedAiActionMessageIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(messageId)) next.delete(messageId)
+      else next.add(messageId)
+      return next
+    })
+  }, [])
+
   const handleSaveFolderDesc = useCallback(async () => {
     if (!editingFolderId) return
     await upsertFolderDescription(editingFolderId, folderDescInput, folderPriorityInput)
@@ -277,25 +549,42 @@ export function Discover() {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (showNoteInput || editingFolderId) return
+      if (showNoteInput || editingFolderId || isRenamingBookmark) return
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
 
       switch (e.key) {
         case 'ArrowRight':
           e.preventDefault()
-          handleReview('keep')
+          goToNext()
           break
         case 'ArrowLeft':
           e.preventDefault()
-          handleSkip()
+          goToPrevious()
           break
         case 'ArrowUp':
+          e.preventDefault()
+          handleReview('delete')
+          break
+        case 'k':
+          e.preventDefault()
+          handleReview('keep')
+          break
+        case 's':
+          e.preventDefault()
+          handleSkip()
+          break
+        case 'd':
           e.preventDefault()
           handleReview('delete')
           break
         case 'n':
           e.preventDefault()
           setShowNoteInput(true)
+          break
+        case 'r':
+          e.preventDefault()
+          setIsRenamingBookmark(true)
+          setRenameInput(currentBookmark?.title || '')
           break
         case 'o':
           e.preventDefault()
@@ -307,7 +596,7 @@ export function Discover() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleReview, handleSkip, showNoteInput, editingFolderId, currentBookmark])
+  }, [goToNext, goToPrevious, handleReview, handleSkip, showNoteInput, editingFolderId, isRenamingBookmark, currentBookmark])
 
   if (loading) {
     return (
@@ -618,9 +907,66 @@ export function Discover() {
                       }}
                     />
                     <div className="min-w-0 flex-1">
-                      <h3 className="text-base font-semibold text-gray-100 leading-tight">
-                        {currentBookmark.title || 'Untitled'}
-                      </h3>
+                      <div className="flex items-start gap-2">
+                        <div className="min-w-0 flex-1">
+                          {isRenamingBookmark ? (
+                            <div className="space-y-2">
+                              <input
+                                ref={renameInputRef}
+                                type="text"
+                                value={renameInput}
+                                onChange={(e) => setRenameInput(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault()
+                                    void handleSaveRename()
+                                  }
+                                  if (e.key === 'Escape') {
+                                    setRenameInput(currentBookmark.title || '')
+                                    setIsRenamingBookmark(false)
+                                  }
+                                }}
+                                className="w-full rounded-lg border border-indigo-500 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none"
+                              />
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => void handleSaveRename()}
+                                  className="text-[11px] px-2.5 py-1 rounded-md bg-indigo-600 text-white hover:bg-indigo-500 transition-colors"
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setRenameInput(currentBookmark.title || '')
+                                    setIsRenamingBookmark(false)
+                                  }}
+                                  className="text-[11px] px-2.5 py-1 rounded-md text-gray-500 hover:text-gray-300 transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <h3 className="text-base font-semibold text-gray-100 leading-tight">
+                              {currentBookmark.title || 'Untitled'}
+                            </h3>
+                          )}
+                        </div>
+                        {!isRenamingBookmark && (
+                          <button
+                            onClick={() => {
+                              setIsRenamingBookmark(true)
+                              setRenameInput(currentBookmark.title || '')
+                            }}
+                            className="mt-0.5 rounded-lg border border-gray-800 p-2 text-gray-500 hover:border-indigo-500 hover:text-indigo-400 hover:bg-indigo-900/20 transition-colors"
+                            title="Rename bookmark (R)"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
                       <a
                         href={currentBookmark.url}
                         target="_blank"
@@ -732,12 +1078,142 @@ export function Discover() {
                   </div>
                 )}
 
+                <div className="px-6 pb-4">
+                  <div className="rounded-xl border border-gray-800 bg-gray-950/50 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-cyan-400">Discover AI</p>
+                        <p className="text-xs text-gray-500 mt-1">Ask AI to act on this bookmark or help you decide what to do with it.</p>
+                      </div>
+                      <div className="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center flex-shrink-0">
+                        <svg className="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.7} d="M9.5 4.5a3.5 3.5 0 00-3.5 3.5v.5a3 3 0 00-2 2.828V13a3 3 0 003 3h.25a2.75 2.75 0 002.5 2h.5A2.75 2.75 0 0013 16h.5a2.5 2.5 0 002.5-2.5V13h.25a3 3 0 003-3v-1.672A3 3 0 0017 5.5V5a3.5 3.5 0 00-6.362-2.044A3.48 3.48 0 009.5 4.5zm-1 4.25h.5m6.5 0h.5M9 12.5h1m4 0h1M12 4v10" />
+                        </svg>
+                      </div>
+                    </div>
+
+                    {hasAiKey === false ? (
+                      <div className="px-4 py-4">
+                        <p className="text-sm text-gray-400">Add your OpenAI API key in Settings to use bookmark-specific AI in Discover.</p>
+                      </div>
+                    ) : (
+                      <div className="px-4 py-4 space-y-3">
+                        {currentAiMessages.length === 0 ? (
+                          <div className="rounded-lg border border-dashed border-gray-800 bg-gray-900/40 px-3 py-3">
+                            <p className="text-sm text-gray-400">Try prompts like “rename this to something cleaner”, “which folder should this live in?”, or “should I keep this bookmark?”</p>
+                          </div>
+                        ) : (
+                          <div ref={aiScrollRef} className="max-h-56 overflow-y-auto space-y-2 pr-1">
+                            {currentAiMessages.map((message) => (
+                              <div key={message.id} className={cn('flex', message.role === 'user' ? 'justify-end' : 'justify-start')}>
+                                <div
+                                  className={cn(
+                                    'max-w-[88%] rounded-2xl px-3 py-2',
+                                    message.role === 'user'
+                                      ? 'bg-cyan-500 text-gray-950'
+                                      : 'bg-gray-800 text-gray-200'
+                                  )}
+                                >
+                                  <p className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</p>
+
+                                  {message.streaming && (
+                                    <p className="mt-2 text-[10px] text-gray-400">Streaming…</p>
+                                  )}
+
+                                  {message.response && hasExecutableActions(message.response.actions) && !message.executionResult && (
+                                    <div className="mt-3 rounded-xl border border-gray-700 bg-gray-900/70 p-3">
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div>
+                                          <p className="text-[11px] font-medium uppercase tracking-wider text-gray-500">Pending actions</p>
+                                          <p className="text-xs text-gray-300 mt-1">
+                                            {getActionSummary(message.response.actions)}
+                                          </p>
+                                        </div>
+                                        <button
+                                          onClick={() => void handleExecuteAiActions(message.id)}
+                                          disabled={message.executing}
+                                          className="px-3 py-1.5 text-xs rounded-lg bg-cyan-500 text-gray-950 hover:bg-cyan-400 disabled:bg-gray-700 disabled:text-gray-500 transition-colors"
+                                        >
+                                          {message.executing ? 'Running…' : 'Run actions'}
+                                        </button>
+                                      </div>
+
+                                      {(() => {
+                                        const executableActions = message.response.actions.filter((action) => action.type !== 'search_results')
+                                        const expanded = expandedAiActionMessageIds.has(message.id)
+                                        const visibleActions = expanded ? executableActions : executableActions.slice(0, 3)
+
+                                        return (
+                                          <>
+                                            <div className="mt-3 space-y-2">
+                                              {visibleActions.map((action, index) => (
+                                                <div key={`${message.id}-${index}`} className="rounded-lg bg-gray-800/70 px-2.5 py-2 text-xs text-gray-300">
+                                                  <span className="font-medium text-cyan-300">{action.type}</span>
+                                                  {action.title ? `: ${action.title}` : ''}
+                                                  {action.bookmarkId ? ` • ${action.bookmarkId}` : ''}
+                                                  {action.destinationFolderId ? ` -> ${action.destinationFolderId}` : ''}
+                                                </div>
+                                              ))}
+                                            </div>
+                                            {executableActions.length > 3 && (
+                                              <button
+                                                onClick={() => toggleExpandedAiActions(message.id)}
+                                                className="mt-2 text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+                                              >
+                                                {expanded ? 'Show fewer actions' : `Show all ${executableActions.length} actions`}
+                                              </button>
+                                            )}
+                                          </>
+                                        )
+                                      })()}
+                                    </div>
+                                  )}
+
+                                  {message.executionResult && (
+                                    <div className="mt-3 rounded-xl border border-emerald-900/40 bg-emerald-950/20 px-3 py-2 text-xs text-emerald-300">
+                                      Applied {message.executionResult.success} action{message.executionResult.success !== 1 && 's'}
+                                      {message.executionResult.failed > 0 && `, ${message.executionResult.failed} failed`}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={aiInput}
+                            onChange={(e) => setAiInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                void handleAskBookmarkAI()
+                              }
+                            }}
+                            placeholder="Ask AI what to do with this bookmark..."
+                            className="flex-1 rounded-xl border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600 outline-none focus:border-cyan-500"
+                          />
+                          <button
+                            onClick={() => void handleAskBookmarkAI()}
+                            disabled={!aiInput.trim() || aiLoading}
+                            className="px-4 py-2 rounded-xl bg-cyan-500 text-gray-950 text-sm font-medium hover:bg-cyan-400 disabled:bg-gray-700 disabled:text-gray-500 transition-colors"
+                          >
+                            {aiLoading ? 'Asking…' : 'Ask'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 {/* Action buttons */}
                 <div className="px-6 py-4 border-t border-gray-800 bg-gray-900/50">
                   <div className="flex items-center justify-center gap-3">
                     <ActionButton
                       label="Delete"
-                      shortcut="up-arrow"
+                      shortcut="D"
                       color="red"
                       icon={
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -746,7 +1222,7 @@ export function Discover() {
                     />
                     <ActionButton
                       label="Skip"
-                      shortcut="left-arrow"
+                      shortcut="S"
                       color="gray"
                       icon={
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -764,7 +1240,7 @@ export function Discover() {
                     </button>
                     <ActionButton
                       label="Keep"
-                      shortcut="right-arrow"
+                      shortcut="K"
                       color="green"
                       icon={
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -773,7 +1249,7 @@ export function Discover() {
                     />
                   </div>
                   <p className="text-center text-[10px] text-gray-600 mt-3">
-                    Use Previous and Next to browse like flashcards. Arrow keys still work for Keep, Skip, and Delete. Press <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">N</kbd> for notes, <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">O</kbd> to open.
+                    Use left and right arrows for Previous and Next. Press <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">K</kbd> to keep, <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">S</kbd> to skip, <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">D</kbd> to delete, <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">N</kbd> for notes, <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">R</kbd> to rename, and <kbd className="px-1 py-0.5 bg-gray-800 rounded text-gray-500">O</kbd> to open.
                   </p>
                 </div>
               </div>

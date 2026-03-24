@@ -81,7 +81,7 @@ export function Reminders() {
             </svg>
             <p className="text-sm text-gray-500">No reminders set</p>
             <p className="mt-1 text-xs text-gray-600">
-              Add reminders from AI Search to follow up on important bookmarks.
+              Add reminders from AI Chat to follow up on important bookmarks.
             </p>
           </div>
         ) : (

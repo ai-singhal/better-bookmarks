@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "@crxjs/vite-plugin": "^2.0.0-beta.33",
-    "@supabase/supabase-js": "^2.99.3",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "react": "^19.2.4",
