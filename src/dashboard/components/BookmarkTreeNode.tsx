@@ -8,18 +8,22 @@ interface BookmarkTreeNodeProps {
   node: BookmarkWithMetadata
   depth: number
   onRefresh: () => void
+  onAskAI?: (node: BookmarkWithMetadata) => void
   onDragStart?: (e: React.DragEvent, node: BookmarkWithMetadata) => void
+  onDragEnd?: () => void
   onDragOver?: (e: React.DragEvent, node: BookmarkWithMetadata) => void
   onDrop?: (e: React.DragEvent, node: BookmarkWithMetadata) => void
   dragOverId?: string | null
-  dragPosition?: 'above' | 'below' | null
+  dragPosition?: 'above' | 'below' | 'inside' | null
 }
 
 export function BookmarkTreeNode({
   node,
   depth,
   onRefresh,
+  onAskAI,
   onDragStart,
+  onDragEnd,
   onDragOver,
   onDrop,
   dragOverId,
@@ -167,6 +171,7 @@ export function BookmarkTreeNode({
       <div
         draggable={!isRenaming}
         onDragStart={(e) => onDragStart?.(e, node)}
+        onDragEnd={() => onDragEnd?.()}
         onDragOver={(e) => onDragOver?.(e, node)}
         onDrop={(e) => onDrop?.(e, node)}
         onContextMenu={(e) => {
@@ -179,7 +184,8 @@ export function BookmarkTreeNode({
           'flex items-center gap-2 px-2 py-1.5 rounded-lg group cursor-pointer hover:bg-gray-800/50 transition-colors',
           (showActions || contextMenu) && 'bg-gray-800/50',
           dragOverId === node.id && dragPosition === 'above' && 'border-t-2 border-t-indigo-500',
-          dragOverId === node.id && dragPosition === 'below' && 'border-b-2 border-b-indigo-500'
+          dragOverId === node.id && dragPosition === 'below' && 'border-b-2 border-b-indigo-500',
+          dragOverId === node.id && dragPosition === 'inside' && 'ring-2 ring-inset ring-indigo-500 bg-indigo-500/10'
         )}
         style={{ paddingLeft: `${depth * 20 + 8}px` }}
         onMouseEnter={() => setShowActions(true)}
@@ -429,6 +435,19 @@ export function BookmarkTreeNode({
             Move
           </button>
 
+          <button
+            onClick={() => {
+              setContextMenu(null)
+              onAskAI?.(node)
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
+          >
+            <svg className="h-4 w-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.5 4.5a3.5 3.5 0 00-3.5 3.5v.5a3 3 0 00-2 2.828V13a3 3 0 003 3h.25a2.75 2.75 0 002.5 2h.5A2.75 2.75 0 0013 16h.5a2.5 2.5 0 002.5-2.5V13h.25a3 3 0 003-3v-1.672A3 3 0 0017 5.5V5a3.5 3.5 0 00-6.362-2.044A3.48 3.48 0 009.5 4.5zm-1 4.25h.5m6.5 0h.5M9 12.5h1m4 0h1M12 4v10" />
+            </svg>
+            Ask AI About This
+          </button>
+
           {!isFolder && (
             <button
               onClick={() => {
@@ -485,10 +504,12 @@ export function BookmarkTreeNode({
               depth={depth + 1}
               onRefresh={onRefresh}
               onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
               onDragOver={onDragOver}
               onDrop={onDrop}
               dragOverId={dragOverId}
               dragPosition={dragPosition}
+              onAskAI={onAskAI}
             />
           ))}
           {node.children.length === 0 && (
