@@ -3,6 +3,7 @@ import { useBookmarkStore } from '../../shared/store'
 import { resolveBookmarkFolders } from '../../shared/chromeApi'
 import { cn, truncateUrl, getFaviconUrl, formatRelativeDate } from '../../shared/utils'
 import type { BookmarkWithMetadata } from '../../shared/types'
+import { FaChrome } from 'react-icons/fa'
 import { BrandLogo } from '../../shared/components/BrandLogo'
 import { getDeletedBookmarks, restoreDeletedBookmark, type DeletedBookmarkRecord } from '../../lib/deletedBookmarkService'
 
@@ -158,13 +159,7 @@ export function Sidebar() {
             <h1 className="text-sm font-semibold">Better Bookmarks</h1>
             <div className="flex items-center gap-1 text-xs text-gray-500">
               <span>for</span>
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" aria-label="Chrome logo">
-                <path fill="#DB4437" d="M12 12L3.4 12A9 9 0 0 1 20.2 8.2L16 15.5Z" />
-                <path fill="#0F9D58" d="M12 12l4 3.5-4.2 7.3A9 9 0 0 1 3.4 12Z" />
-                <path fill="#F4B400" d="M12 12l4-3.5h8A9 9 0 0 1 11.8 22.8Z" />
-                <circle cx="12" cy="12" r="3.6" fill="#4285F4" />
-                <circle cx="12" cy="12" r="1.8" fill="#AECBFA" />
-              </svg>
+              <FaChrome className="w-3.5 h-3.5" aria-label="Chrome logo" />
             </div>
           </div>
         </div>
@@ -375,7 +370,15 @@ export function Sidebar() {
       {/* Footer */}
       <div className="px-5 py-3 border-t border-gray-800 flex-shrink-0">
         <p className="text-xs text-gray-600">
-          Better Bookmarks<br />
+          <a
+            href="https://github.com/ai-singhal/better-bookmarks"
+            className="text-gray-300 hover:text-white hover:underline"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Better Bookmarks
+          </a>
+          <br />
           Made with ❤️ by&nbsp;
           <a href="https://x.com/ai_singhal" className="text-blue-500 hover:underline" target="_blank" rel="noopener noreferrer">@ai_singhal</a>
         </p>

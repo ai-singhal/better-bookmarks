@@ -75,6 +75,7 @@ export function Command() {
   const [chatStateHydrated, setChatStateHydrated] = useState(false)
   const [showChatPicker, setShowChatPicker] = useState(false)
   const [expandedActionMessageIds, setExpandedActionMessageIds] = useState<Set<string>>(new Set())
+  const [canDismissKeySetup, setCanDismissKeySetup] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -88,6 +89,7 @@ export function Command() {
 
       const key = await getOpenAIKey()
       setHasApiKey(!!key)
+      setCanDismissKeySetup(!!key)
 
       const model = await getOpenAIModel()
       setSelectedModel(model)
@@ -170,9 +172,29 @@ export function Command() {
     setSavingKey(true)
     await setOpenAIKey(apiKeyInput.trim())
     setHasApiKey(true)
+    setCanDismissKeySetup(true)
     setSavingKey(false)
     setApiKeyInput('')
   }
+
+  const handleExitKeySetup = useCallback(() => {
+    if (!canDismissKeySetup) return
+    setHasApiKey(true)
+    setApiKeyInput('')
+  }, [canDismissKeySetup])
+
+  useEffect(() => {
+    if (hasApiKey !== false || !canDismissKeySetup) return
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      handleExitKeySetup()
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [canDismissKeySetup, handleExitKeySetup, hasApiKey])
 
   const handleSend = async () => {
     const query = input.trim()
@@ -357,8 +379,18 @@ export function Command() {
             >
               {savingKey ? 'Saving...' : 'Save & Continue'}
             </button>
+            {canDismissKeySetup && (
+              <button
+                onClick={handleExitKeySetup}
+                className="w-full py-2.5 text-sm text-gray-400 hover:text-gray-200 rounded-xl border border-gray-800 hover:border-gray-700 hover:bg-gray-900 transition-colors"
+              >
+                Cancel
+              </button>
+            )}
             <p className="text-[11px] text-gray-600 text-center">
-              Defaults to GPT-5.4 mini. You can switch models later from Settings or the AI Chat header.
+              {canDismissKeySetup
+                ? 'Press Esc to close. Defaults to GPT-5.4 mini. You can switch models later from Settings or the AI Chat header.'
+                : 'Defaults to GPT-5.4 mini. You can switch models later from Settings or the AI Chat header.'}
             </p>
           </div>
         </div>
