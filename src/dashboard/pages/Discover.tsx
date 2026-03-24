@@ -1100,7 +1100,7 @@ export function Discover() {
                       <div className="px-4 py-4 space-y-3">
                         {currentAiMessages.length === 0 ? (
                           <div className="rounded-lg border border-dashed border-gray-800 bg-gray-900/40 px-3 py-3">
-                            <p className="text-sm text-gray-400">Try prompts like “rename this to something cleaner”, “which folder should this live in?”, or “should I keep this bookmark?”</p>
+                            <p className="text-sm text-gray-400">Try prompts like “rename this to something cleaner” or “should I keep this bookmark?”</p>
                           </div>
                         ) : (
                           <div ref={aiScrollRef} className="max-h-56 overflow-y-auto space-y-2 pr-1">
@@ -1213,6 +1213,7 @@ export function Discover() {
                   <div className="flex items-center justify-center gap-3">
                     <ActionButton
                       label="Delete"
+                      description="Remove this bookmark from Chrome."
                       shortcut="D"
                       color="red"
                       icon={
@@ -1222,6 +1223,7 @@ export function Discover() {
                     />
                     <ActionButton
                       label="Skip"
+                      description="Leave it unreviewed and move to the next bookmark."
                       shortcut="S"
                       color="gray"
                       icon={
@@ -1229,17 +1231,19 @@ export function Discover() {
                       }
                       onClick={handleSkip}
                     />
-                    <button
-                      onClick={() => setShowNoteInput(!showNoteInput)}
-                      className="w-14 h-14 rounded-2xl bg-gray-800 border-2 border-gray-700 flex items-center justify-center hover:border-indigo-500 hover:bg-indigo-900/20 transition-all group"
-                      title="Add note (N)"
-                    >
-                      <svg className="w-6 h-6 text-gray-400 group-hover:text-indigo-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <ActionButton
+                      label="Note"
+                      description="Add context, tags, or a reminder for why you saved it."
+                      shortcut="N"
+                      color="indigo"
+                      icon={
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    </button>
+                      }
+                      onClick={() => setShowNoteInput(!showNoteInput)}
+                    />
                     <ActionButton
                       label="Keep"
+                      description="Mark this bookmark as worth keeping."
                       shortcut="K"
                       color="green"
                       icon={
@@ -1266,14 +1270,16 @@ export function Discover() {
 
 function ActionButton({
   label,
+  description,
   shortcut,
   color,
   icon,
   onClick,
 }: {
   label: string
+  description: string
   shortcut: string
-  color: 'red' | 'green' | 'gray'
+  color: 'red' | 'green' | 'gray' | 'indigo'
   icon: React.ReactNode
   onClick: () => void
 }) {
@@ -1281,25 +1287,35 @@ function ActionButton({
     red: 'hover:border-red-500 hover:bg-red-900/20 group-hover:text-red-400',
     green: 'hover:border-emerald-500 hover:bg-emerald-900/20 group-hover:text-emerald-400',
     gray: 'hover:border-gray-500 hover:bg-gray-700/30 group-hover:text-gray-300',
+    indigo: 'hover:border-indigo-500 hover:bg-indigo-900/20 group-hover:text-indigo-400',
   }
   const iconColorMap = {
     red: 'group-hover:text-red-400',
     green: 'group-hover:text-emerald-400',
     gray: 'group-hover:text-gray-300',
+    indigo: 'group-hover:text-indigo-400',
   }
 
   return (
-    <button
-      onClick={onClick}
-      className={cn(
-        'w-12 h-12 rounded-xl bg-gray-800 border-2 border-gray-700 flex flex-col items-center justify-center transition-all group',
-        colorMap[color]
-      )}
-      title={`${label} (${shortcut})`}
-    >
-      <svg className={cn('w-5 h-5 text-gray-400 transition-colors', iconColorMap[color])} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        {icon}
-      </svg>
-    </button>
+    <div className="relative group">
+      <button
+        onClick={onClick}
+        className={cn(
+          'w-14 h-14 rounded-2xl bg-gray-800 border-2 border-gray-700 flex items-center justify-center transition-all',
+          colorMap[color]
+        )}
+        aria-label={`${label}. ${description} Shortcut ${shortcut}.`}
+      >
+        <svg className={cn('w-5 h-5 text-gray-400 transition-colors', iconColorMap[color])} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          {icon}
+        </svg>
+      </button>
+      <div className="pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-40 -translate-x-1/2 rounded-lg border border-gray-700 bg-gray-950 px-2.5 py-2 text-center opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
+        <p className="text-[11px] font-medium text-gray-100">
+          {label} <span className="text-gray-500">({shortcut})</span>
+        </p>
+        <p className="mt-1 text-[10px] leading-relaxed text-gray-400">{description}</p>
+      </div>
+    </div>
   )
 }
