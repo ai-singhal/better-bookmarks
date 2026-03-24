@@ -1,43 +1,62 @@
 # Better Bookmarks
 
-Better Bookmarks is a Chrome extension for browsing, searching, organizing, and revisiting your bookmarks with a cleaner UI than Chrome's default manager.
+Better Bookmarks is a Chrome extension for people whose bookmark bar turned into a storage unit.
 
-Features:
+Chrome lets you save links. It does not help much with remembering why you saved them, reviewing them later, or cleaning up the pile once it gets large. This project turns bookmarks into a workspace: a proper tree view, quick search, reminder tracking, a review queue, and an optional AI command layer for bulk actions.
 
-- a fast popup for recent bookmarks and quick search
-- a full dashboard for bookmark tree management
-- local "AI search" built on parsed page content, BM25-style ranking, topic clustering, and natural-language query parsing
-- reminder scheduling with Chrome notifications
-- bookmark context/notes that improve search relevance
-- organization analysis for misplaced links, duplicates, and empty folders
+The core experience is local-first. Your bookmark tree lives in Chrome, your extension metadata lives in Chrome storage, and the extension is useful before you configure any external service.
 
-## What Works Today
+## What Makes It Different
 
-### Local features
+- A fast popup for recent bookmarks and quick lookup.
+- A full dashboard for browsing, reordering, editing, and cleaning up bookmark folders.
+- A "Discover" flow that feels more like triage than folder maintenance.
+- Reminder scheduling for links you actually want to come back to.
+- Per-bookmark notes, tags, and context stored alongside the bookmark in extension storage.
+- An optional "Command" page that can turn plain-English requests into bookmark actions.
 
-These work without any backend:
+## Current Product Surface
 
-- browse the full bookmark tree
-- create folders and manage bookmarks from the dashboard
-- search bookmarks from the popup
-- build a local search index from bookmark titles, saved context, reminders, and fetched page content
-- run semantic-ish local search with time filters like `last month`, `today`, or `recent`
-- store bookmark notes, tags, and reminders in Chrome local storage
-- trigger reminder notifications through the background service worker
-- detect likely organization issues such as duplicates and empty folders
+Today, the extension is centered around five pages:
 
-### Backend scaffolding
+- `Bookmarks`: browse the full tree, create folders, drag to reorder, and manage the structure directly.
+- `Command`: use an OpenAI key to search, rename, move, create folders, and perform bulk bookmark actions from natural language.
+- `Discover`: review bookmarks one by one, add notes and tags, and triage them into keep, skip, archive, or delete.
+- `Reminders`: manage bookmark follow-ups and recurring reminders.
+- `Settings`: configure local preferences and the optional OpenAI API key.
 
-The repo also includes Supabase schema and edge functions for:
+On first install, the extension automatically opens the dashboard.
 
-- bookmark metadata sync
-- pgvector-based semantic search
-- AI summaries and tag suggestions
-- server-side organization suggestions
+## Local-First By Default
 
-That backend path is not fully wired end-to-end in the extension yet. In particular, the current UI lets you save a Supabase URL and anon key, but there is no in-extension auth flow, while several sync functions expect an authenticated Supabase user session.
+Better Bookmarks is designed to be useful without standing up a backend.
 
-## Stack
+Out of the box, the project already supports:
+
+- reading and managing the Chrome bookmark tree
+- storing bookmark notes, tags, folder descriptions, and triage history in `chrome.storage.local`
+- storing user settings and the OpenAI API key in `chrome.storage.sync`
+- scheduling reminders with Chrome alarms and notifications
+- quick popup search with a fallback to Chrome's native bookmark search
+- fetching bookmarked page content to improve local context and summaries
+
+## Optional AI Layer
+
+The AI features are intentionally additive, not the foundation of the whole app.
+
+The current command workflow:
+
+- takes your full bookmark tree
+- serializes it into a model-readable structure
+- sends your prompt and the tree to OpenAI
+- receives structured actions back
+- executes those actions through the Chrome bookmarks API
+
+Right now the Command page uses `gpt-4o-mini` directly from the extension. The API key is stored in Chrome sync storage and sent only to OpenAI when you use that feature.
+
+The repo also includes early Supabase migrations and edge functions for future cloud-backed search, embeddings, summaries, and organization suggestions. That path is not fully wired into the live dashboard flow yet, so this repository should be understood as a solid local product with some backend scaffolding still in progress.
+
+## Tech Stack
 
 - Chrome Extension Manifest V3
 - React 19
@@ -45,24 +64,25 @@ That backend path is not fully wired end-to-end in the extension yet. In particu
 - Vite
 - `@crxjs/vite-plugin`
 - Zustand
-- Supabase
+- Tailwind CSS v4
+- Supabase edge-function scaffolding for future hosted features
 
-## Project Structure
+## Project Layout
 
 ```text
 src/
-  background/   MV3 service worker, alarms, bookmark listeners, message routing
-  popup/        extension popup UI
-  dashboard/    full-page bookmark manager UI
-  lib/          local search, parsing, reminders, sync helpers
-  shared/       Chrome API wrappers, types, store, utilities
+  background/   service worker, alarms, bookmark listeners, message routing
+  popup/        compact popup UI for quick access
+  dashboard/    full-page extension app
+  lib/          search, parsing, reminders, AI helpers, sync experiments
+  shared/       shared types, store, Chrome API helpers, utilities
   content/      content script entry
 supabase/
-  migrations/   database schema
-  functions/    edge functions for summaries, embeddings, search, organization
+  migrations/   database schema for experimental hosted features
+  functions/    edge functions for embeddings, summaries, search, organization
 ```
 
-## Installation
+## Getting Started
 
 ### 1. Install dependencies
 
@@ -76,18 +96,16 @@ npm install
 npm run build
 ```
 
-### 3. Load it in Chrome
+### 3. Load it into Chrome
 
 1. Open `chrome://extensions`
-2. Enable `Developer mode`
+2. Turn on `Developer mode`
 3. Click `Load unpacked`
-4. Select the `dist/` folder
+4. Select the generated `dist/` directory
 
-On first install, the extension opens the dashboard automatically.
+If you are iterating on the code, rebuild and reload the unpacked extension after changes.
 
 ## Development
-
-Available scripts:
 
 ```bash
 npm run dev
@@ -95,95 +113,56 @@ npm run build
 npm run lint
 ```
 
-For the most reliable manual test flow, rebuild with `npm run build` and reload the unpacked extension in Chrome.
+The repo is built with Vite and CRXJS. In practice, the most reliable workflow is:
 
-## How the Search Works
+1. run `npm run build`
+2. reload the extension in `chrome://extensions`
+3. re-open the popup or dashboard
 
-The "AI Search" page is local-first. It does not depend on a hosted vector database for the main dashboard experience.
+## Privacy And External Services
 
-The index combines:
+The local bookmark management features do not require an external backend.
 
-- bookmark title and URL
-- saved bookmark context and tags
-- reminder metadata
-- parsed page title, description, headings, keywords, author, and extracted body text
+Some features do make network requests:
 
-Search quality comes from:
+- The Command page calls the OpenAI API if you configure an API key.
+- Page parsing and summary extraction may use Jina Reader to pull readable page content from bookmarked URLs.
+- The repo includes Supabase modules and edge functions, but they are not the primary path for the current UI.
 
-- tokenization and light stemming
-- BM25-style scoring
-- query expansion for shorthand terms like `ml`, `ai`, `people`, `repos`
-- natural-language time filters like `last week`, `this month`, `yesterday`
-- lightweight topic clustering
-
-## Settings
-
-The Settings page currently supports:
-
-- `Auto-summarize new bookmarks`
-- `Show notifications`
-- `Supabase URL`
-- `Supabase anon key`
-
-Settings are stored in Chrome sync storage. Bookmark insights, reminders, and the local search index are stored in Chrome local storage.
-
-## Optional Supabase Setup
-
-If you want to continue the backend integration, this repo already includes the starting pieces.
-
-### Database
-
-Apply the schema in [supabase/migrations/001_create_tables.sql](/Users/aryan/Downloads/chrome bookmark manager/supabase/migrations/001_create_tables.sql). It creates:
-
-- `bookmark_metadata`
-- `bookmark_embeddings`
-- `organization_suggestions`
-- RLS policies
-- a `match_bookmarks` RPC for vector search
-
-### Edge functions
-
-The repo includes:
-
-- `generate-embedding`
-- `semantic-search`
-- `summarize-page`
-- `suggest-organization`
-
-These functions expect Supabase project secrets such as:
-
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `OPENAI_API_KEY`
-- `ANTHROPIC_API_KEY`
-
-### Important limitation
-
-Cloud sync and server-backed search are not turnkey yet. The extension code calls `supabase.auth.getUser()` in multiple places, but no sign-in flow is implemented in the current UI. If you want those features to work, you will need to add authentication and finish wiring the sync/background jobs.
+The extension requests broad host permissions because it can fetch bookmarked pages for indexing and context extraction.
 
 ## Permissions
 
-The extension requests:
+The extension currently requests:
 
-- `bookmarks` to read, search, move, create, and delete bookmarks
-- `storage` to persist settings, local insights, reminders, and the local search index
-- `alarms` and `notifications` for reminder scheduling
-- `activeTab` and broad host permissions so bookmarked pages can be fetched and parsed for indexing
-- `identity` and `contextMenus`, which appear reserved for future auth/integration work
+- `bookmarks` to read and mutate the bookmark tree
+- `storage` to persist settings, notes, reminders, and local metadata
+- `alarms` and `notifications` for reminder delivery
+- `activeTab` plus broad host permissions for page fetching and parsing
+- `identity` and `contextMenus` for future integration work
 
-## Known Gaps
+## Known Limitations
 
-- Supabase auth is not implemented in the UI
-- background batch embedding and sync alarms are still TODOs
-- notification-on-new-bookmark flow is still TODO
-- some backend helper modules are present but not currently used by the main dashboard flow
+- The Supabase-backed path is incomplete and should be treated as experimental.
+- Some older modules and pages exist in the repo but are not part of the main dashboard navigation today.
+- The Command experience depends on the quality of model output, so bulk actions should still be reviewed before you trust them blindly.
+- The extension is Chrome-first; other Chromium browsers may work, but that is not the primary target.
 
-## Build Output
+## Why This Exists
 
-- unpacked extension bundle: `dist/`
-- manifest source: [manifest.json](/Users/aryan/Downloads/chrome bookmark manager/manifest.json)
-- Vite config: [vite.config.ts](/Users/aryan/Downloads/chrome bookmark manager/vite.config.ts)
+This project is built around a simple assumption: saved links are only useful if you can get back to them with context.
+
+Most bookmark tools optimize for saving faster. Better Bookmarks is more interested in the second half of the problem: review, recall, cleanup, and rediscovery.
+
+## Contributing
+
+Issues and pull requests are welcome. If you want to contribute, the most useful areas right now are:
+
+- hardening the Command action pipeline
+- improving local search and indexing quality
+- tightening the permissions and privacy model
+- finishing or removing half-wired backend flows so the product surface is clearer
 
 ## License
 
-No license file is included in this repository yet.
+This project is licensed under the MIT License. See [LICENSE](./LICENSE).
