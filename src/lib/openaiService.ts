@@ -4,7 +4,41 @@
 import type { BookmarkWithMetadata } from '../shared/types'
 
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions'
-const MODEL = 'gpt-4o-mini'
+
+export interface OpenAIModelOption {
+  id: string
+  label: string
+  description: string
+}
+
+export const OPENAI_MODELS = [
+  {
+    id: 'gpt-5.4-mini',
+    label: 'GPT-5.4 mini',
+    description: 'Best default for this app: fast, lower-cost, and strong for everyday bookmark commands',
+  },
+  {
+    id: 'gpt-5.4',
+    label: 'GPT-5.4',
+    description: 'Best quality for complex organization, planning, and multi-step reasoning',
+  },
+  {
+    id: 'gpt-5.4-nano',
+    label: 'GPT-5.4 nano',
+    description: 'Cheapest option for simple, high-volume tasks like light classification and cleanup',
+  },
+  {
+    id: 'gpt-4.1',
+    label: 'GPT-4.1',
+    description: 'Strong non-reasoning fallback with solid instruction following and tool calling',
+  },
+] satisfies readonly OpenAIModelOption[]
+
+export const DEFAULT_OPENAI_MODEL = 'gpt-5.4-mini'
+
+function isSupportedOpenAIModel(model: string): boolean {
+  return OPENAI_MODELS.some((option) => option.id === model)
+}
 
 // ─── Types ───
 
@@ -37,6 +71,20 @@ export async function setOpenAIKey(key: string): Promise<void> {
   const data = await chrome.storage.sync.get('settings')
   const settings = (data.settings as Record<string, unknown>) || {}
   settings.openaiApiKey = key
+  await chrome.storage.sync.set({ settings })
+}
+
+export async function getOpenAIModel(): Promise<string> {
+  const data = await chrome.storage.sync.get('settings')
+  const settings = data.settings as Record<string, string> | undefined
+  const model = settings?.openaiModel
+  return model && isSupportedOpenAIModel(model) ? model : DEFAULT_OPENAI_MODEL
+}
+
+export async function setOpenAIModel(model: string): Promise<void> {
+  const data = await chrome.storage.sync.get('settings')
+  const settings = (data.settings as Record<string, unknown>) || {}
+  settings.openaiModel = model
   await chrome.storage.sync.set({ settings })
 }
 
@@ -137,6 +185,8 @@ export async function queryAI(
     { role: 'user', content: prompt },
   ]
 
+  const selectedModel = await getOpenAIModel()
+
   const response = await fetch(OPENAI_API_URL, {
     method: 'POST',
     headers: {
@@ -144,7 +194,7 @@ export async function queryAI(
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: MODEL,
+      model: selectedModel,
       messages,
       temperature: 0.1,
       max_tokens: 4096,

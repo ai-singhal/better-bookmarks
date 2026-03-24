@@ -1,15 +1,18 @@
 import { useState, useEffect } from 'react'
+import { DEFAULT_OPENAI_MODEL, OPENAI_MODELS } from '../../lib/openaiService'
 
 interface SettingsState {
   autoSummarize: boolean
   showNotifications: boolean
   openaiApiKey: string
+  openaiModel: string
 }
 
 const defaultSettings: SettingsState = {
   autoSummarize: true,
   showNotifications: true,
   openaiApiKey: '',
+  openaiModel: DEFAULT_OPENAI_MODEL,
 }
 
 export function Settings() {
@@ -121,7 +124,27 @@ export function Settings() {
                   </button>
                 </div>
                 <p className="text-xs text-gray-600 mt-1.5">
-                  Powers the Command tab. Uses gpt-4o-mini. Stored locally in Chrome sync storage.
+                  Stored locally in Chrome sync storage. Never sent anywhere except OpenAI.
+                </p>
+              </div>
+
+              <div className="p-3 rounded-lg bg-gray-900/50 border border-gray-800">
+                <label className="block text-sm text-gray-200 mb-1.5">
+                  Model
+                </label>
+                <select
+                  value={settings.openaiModel}
+                  onChange={(e) => updateSetting('openaiModel', e.target.value)}
+                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md text-sm text-gray-100 focus:outline-none focus:border-indigo-500 appearance-none cursor-pointer"
+                >
+                  {OPENAI_MODELS.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.label} — {model.description}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-600 mt-1.5">
+                  Curated current OpenAI API text models for this workflow. Also changeable from the Command tab header.
                 </p>
               </div>
             </div>

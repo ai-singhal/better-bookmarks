@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { getBookmarkTree, flattenBookmarks } from '../../shared/chromeApi'
-import { queryAI, executeActions, getOpenAIKey, setOpenAIKey, type AIAction, type AIResponse } from '../../lib/openaiService'
+import { queryAI, executeActions, getOpenAIKey, setOpenAIKey, getOpenAIModel, setOpenAIModel, OPENAI_MODELS, DEFAULT_OPENAI_MODEL, type AIAction, type AIResponse } from '../../lib/openaiService'
 import type { BookmarkWithMetadata } from '../../shared/types'
 import { cn, getFaviconUrl, truncateUrl, formatRelativeDate } from '../../shared/utils'
 
@@ -21,6 +21,8 @@ export function Command() {
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null)
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [savingKey, setSavingKey] = useState(false)
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_OPENAI_MODEL)
+  const [showModelPicker, setShowModelPicker] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -34,6 +36,9 @@ export function Command() {
 
       const key = await getOpenAIKey()
       setHasApiKey(!!key)
+
+      const model = await getOpenAIModel()
+      setSelectedModel(model)
     }
     init()
   }, [])
@@ -177,7 +182,7 @@ export function Command() {
               {savingKey ? 'Saving...' : 'Save & Continue'}
             </button>
             <p className="text-[11px] text-gray-600 text-center">
-              Uses gpt-4o-mini. Stored in Chrome sync storage, never sent anywhere except OpenAI.
+              Defaults to GPT-5.4 mini. You can switch models later from Settings or the Command header.
             </p>
           </div>
         </div>
@@ -205,9 +210,45 @@ export function Command() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] px-2 py-1 rounded-full bg-emerald-900/30 text-emerald-400 border border-emerald-900/30">
-              gpt-4o-mini
-            </span>
+            <div className="relative">
+              <button
+                onClick={() => setShowModelPicker(!showModelPicker)}
+                className="text-[11px] px-2.5 py-1 rounded-full bg-emerald-900/30 text-emerald-400 border border-emerald-900/30 hover:bg-emerald-900/50 transition-colors flex items-center gap-1"
+              >
+                {OPENAI_MODELS.find(m => m.id === selectedModel)?.label || selectedModel}
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {showModelPicker && (
+                <div className="absolute right-0 top-full mt-1 w-64 bg-gray-900 border border-gray-700 rounded-xl shadow-xl z-50 py-1 overflow-hidden">
+                  {OPENAI_MODELS.map((model) => (
+                    <button
+                      key={model.id}
+                      onClick={async () => {
+                        setSelectedModel(model.id)
+                        await setOpenAIModel(model.id)
+                        setShowModelPicker(false)
+                      }}
+                      className={cn(
+                        'w-full text-left px-3 py-2 flex items-center justify-between hover:bg-gray-800 transition-colors',
+                        selectedModel === model.id && 'bg-gray-800'
+                      )}
+                    >
+                      <div>
+                        <p className="text-xs font-medium text-gray-200">{model.label}</p>
+                        <p className="text-[10px] text-gray-500">{model.description}</p>
+                      </div>
+                      {selectedModel === model.id && (
+                        <svg className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <button
               onClick={() => setHasApiKey(false)}
               className="text-xs text-gray-500 hover:text-gray-300 px-2 py-1 rounded hover:bg-gray-800 transition-colors"

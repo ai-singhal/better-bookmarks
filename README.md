@@ -52,7 +52,7 @@ The current command workflow:
 - receives structured actions back
 - executes those actions through the Chrome bookmarks API
 
-Right now the Command page uses `gpt-4o-mini` directly from the extension. The API key is stored in Chrome sync storage and sent only to OpenAI when you use that feature.
+The Command page uses your chosen OpenAI text model directly from the extension. The default is `gpt-5.4-mini`, and the picker is curated to current relevant API text models for this workflow. The API key is stored in Chrome sync storage and sent only to OpenAI when you use that feature.
 
 The repo also includes early Supabase migrations and edge functions for future cloud-backed search, embeddings, summaries, and organization suggestions. That path is not fully wired into the live dashboard flow yet, so this repository should be understood as a solid local product with some backend scaffolding still in progress.
 
