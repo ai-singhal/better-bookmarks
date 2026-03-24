@@ -2,15 +2,15 @@ import React from 'react'
 import { useBookmarkStore } from '../shared/store'
 import { Sidebar } from './components/Sidebar'
 import { BookmarkTree } from './pages/BookmarkTree'
-import { SemanticSearch } from './pages/SemanticSearch'
-import { Organization } from './pages/Organization'
+import { Command } from './pages/Command'
+import { Discover } from './pages/Discover'
 import { Reminders } from './pages/Reminders'
 import { Settings } from './pages/Settings'
 
 const pages: Record<string, React.FC> = {
   bookmarks: BookmarkTree,
-  search: SemanticSearch,
-  organize: Organization,
+  command: Command,
+  discover: Discover,
   reminders: Reminders,
   settings: Settings,
 }

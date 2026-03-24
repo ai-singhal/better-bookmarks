@@ -1,5 +1,7 @@
 // Fast page content extraction for bookmark indexing
-// Fetches pages and extracts meaningful text for vectorization
+// Uses Jina Reader API as primary parser, falls back to manual HTML parsing
+
+import { fetchPageWithJina } from './jinaService'
 
 export interface ParsedPage {
   title: string
@@ -17,6 +19,37 @@ const FETCH_TIMEOUT = 8000
 const MAX_TEXT_LENGTH = 5000
 
 export async function parsePage(url: string): Promise<ParsedPage | null> {
+  // Try Jina Reader first — faster, handles JS-rendered pages
+  try {
+    const jina = await fetchPageWithJina(url)
+    if (jina && jina.content.length > 50) {
+      const domain = getDomain(url)
+      const headings = jina.content
+        .split('\n')
+        .filter((l) => l.startsWith('#'))
+        .map((l) => l.replace(/^#+\s*/, '').trim())
+        .slice(0, 15)
+
+      return {
+        title: jina.title,
+        description: jina.description,
+        headings,
+        mainText: jina.content.slice(0, MAX_TEXT_LENGTH),
+        keywords: [],
+        author: '',
+        publishDate: '',
+        domain,
+        fullText: [jina.title, jina.description, jina.content, domain]
+          .filter(Boolean)
+          .join(' ')
+          .slice(0, MAX_TEXT_LENGTH * 2),
+      }
+    }
+  } catch {
+    // Fall through to manual parsing
+  }
+
+  // Fallback: manual HTML fetch + parse
   try {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT)

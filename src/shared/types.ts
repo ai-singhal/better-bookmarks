@@ -72,6 +72,22 @@ export interface OrganizationSuggestion {
   status: 'pending' | 'accepted' | 'dismissed'
 }
 
+export interface FolderDescription {
+  folderId: string
+  description: string
+  priority: 'high' | 'medium' | 'low' | 'none'
+  updatedAt: string
+}
+
+export type TriageStatus = 'keep' | 'archive' | 'skip' | 'delete'
+
+export interface TriageRecord {
+  bookmarkId: string
+  status: TriageStatus
+  note?: string
+  triageDate: string
+}
+
 export interface ReminderConfig {
   bookmarkId: string
   remindAt: string

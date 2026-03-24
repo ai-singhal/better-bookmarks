@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useRef, useEffect, useCallback } from 'react'
 
 interface SearchBarProps {
   onSearch: (query: string) => void
@@ -6,19 +6,20 @@ interface SearchBarProps {
 }
 
 export function SearchBar({ onSearch, isSearching }: SearchBarProps) {
-  const [query, setQuery] = useState('')
   const inputRef = useRef<HTMLInputElement | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const onSearchRef = useRef(onSearch)
+  onSearchRef.current = onSearch
 
   useEffect(() => {
     inputRef.current?.focus()
   }, [])
 
-  const handleChange = (value: string) => {
-    setQuery(value)
+  const handleInput = useCallback(() => {
     clearTimeout(timerRef.current)
-    timerRef.current = setTimeout(() => onSearch(value), 250)
-  }
+    const value = inputRef.current?.value ?? ''
+    timerRef.current = setTimeout(() => onSearchRef.current(value), 350)
+  }, [])
 
   return (
     <div className="relative">
@@ -38,8 +39,8 @@ export function SearchBar({ onSearch, isSearching }: SearchBarProps) {
       <input
         ref={inputRef}
         type="text"
-        value={query}
-        onChange={(e) => handleChange(e.target.value)}
+        defaultValue=""
+        onInput={handleInput}
         placeholder="Search bookmarks..."
         className="w-full pl-10 pr-4 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
       />

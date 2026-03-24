@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { SearchBar } from './components/SearchBar'
 import { RecentBookmarks } from './components/RecentBookmarks'
 import { QuickActions } from './components/QuickActions'
@@ -38,6 +38,8 @@ export function Popup() {
     })
   }, [])
 
+  const indexLoadedRef = useRef(false)
+
   const handleSearch = useCallback(async (query: string) => {
     if (!query.trim()) {
       setSearchResults([])
@@ -49,9 +51,15 @@ export function Popup() {
     try {
       let bookmarks: BookmarkWithMetadata[] = []
 
-      if (hasSemanticIndex || (await loadIndex())) {
+      // Only attempt loadIndex once per popup session
+      if (!indexLoadedRef.current && !hasSemanticIndex) {
+        const loaded = await loadIndex()
+        indexLoadedRef.current = true
+        if (loaded) setHasSemanticIndex(true)
+      }
+
+      if (hasSemanticIndex || indexLoadedRef.current) {
         bookmarks = semanticSearch(query, 15).results.map((result) => result.bookmark)
-        setHasSemanticIndex(true)
       }
 
       if (bookmarks.length === 0) {

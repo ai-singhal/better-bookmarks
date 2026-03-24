@@ -8,12 +8,22 @@ interface BookmarkTreeNodeProps {
   node: BookmarkWithMetadata
   depth: number
   onRefresh: () => void
+  onDragStart?: (e: React.DragEvent, node: BookmarkWithMetadata) => void
+  onDragOver?: (e: React.DragEvent, node: BookmarkWithMetadata) => void
+  onDrop?: (e: React.DragEvent, node: BookmarkWithMetadata) => void
+  dragOverId?: string | null
+  dragPosition?: 'above' | 'below' | null
 }
 
 export function BookmarkTreeNode({
   node,
   depth,
   onRefresh,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  dragOverId,
+  dragPosition,
 }: BookmarkTreeNodeProps) {
   const [expanded, setExpanded] = useState(depth < 1)
   const [showActions, setShowActions] = useState(false)
@@ -100,9 +110,15 @@ export function BookmarkTreeNode({
   return (
     <div>
       <div
+        draggable={!isRenaming}
+        onDragStart={(e) => onDragStart?.(e, node)}
+        onDragOver={(e) => onDragOver?.(e, node)}
+        onDrop={(e) => onDrop?.(e, node)}
         className={cn(
           'flex items-center gap-2 px-2 py-1.5 rounded-lg group cursor-pointer hover:bg-gray-800/50 transition-colors',
-          showActions && 'bg-gray-800/50'
+          showActions && 'bg-gray-800/50',
+          dragOverId === node.id && dragPosition === 'above' && 'border-t-2 border-t-indigo-500',
+          dragOverId === node.id && dragPosition === 'below' && 'border-b-2 border-b-indigo-500'
         )}
         style={{ paddingLeft: `${depth * 20 + 8}px` }}
         onMouseEnter={() => setShowActions(true)}
@@ -292,6 +308,11 @@ export function BookmarkTreeNode({
               node={child}
               depth={depth + 1}
               onRefresh={onRefresh}
+              onDragStart={onDragStart}
+              onDragOver={onDragOver}
+              onDrop={onDrop}
+              dragOverId={dragOverId}
+              dragPosition={dragPosition}
             />
           ))}
           {node.children.length === 0 && (

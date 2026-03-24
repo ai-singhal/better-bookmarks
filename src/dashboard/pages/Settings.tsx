@@ -3,24 +3,19 @@ import { useState, useEffect } from 'react'
 interface SettingsState {
   autoSummarize: boolean
   showNotifications: boolean
-  supabaseUrl: string
-  supabaseAnonKey: string
   openaiApiKey: string
-  claudeApiKey: string
 }
 
 const defaultSettings: SettingsState = {
   autoSummarize: true,
   showNotifications: true,
-  supabaseUrl: '',
-  supabaseAnonKey: '',
   openaiApiKey: '',
-  claudeApiKey: '',
 }
 
 export function Settings() {
   const [settings, setSettings] = useState<SettingsState>(defaultSettings)
   const [saved, setSaved] = useState(false)
+  const [showKey, setShowKey] = useState(false)
 
   useEffect(() => {
     chrome.storage.sync.get('settings').then((data) => {
@@ -83,7 +78,7 @@ export function Settings() {
                 <div>
                   <p className="text-sm text-gray-200">Show notifications</p>
                   <p className="text-xs text-gray-500">
-                    Get notified about new bookmarks and reminders
+                    Get notified about reminders
                   </p>
                 </div>
                 <input
@@ -98,40 +93,36 @@ export function Settings() {
             </div>
           </section>
 
-          {/* API Configuration */}
+          {/* AI Configuration */}
           <section>
             <h3 className="text-sm font-medium text-gray-300 mb-3">
-              Backend Configuration
+              AI Configuration
             </h3>
             <div className="space-y-3">
               <div className="p-3 rounded-lg bg-gray-900/50 border border-gray-800">
                 <label className="block text-sm text-gray-200 mb-1.5">
-                  Supabase URL
+                  OpenAI API Key
                 </label>
-                <input
-                  type="text"
-                  value={settings.supabaseUrl}
-                  onChange={(e) =>
-                    updateSetting('supabaseUrl', e.target.value)
-                  }
-                  placeholder="https://your-project.supabase.co"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div className="p-3 rounded-lg bg-gray-900/50 border border-gray-800">
-                <label className="block text-sm text-gray-200 mb-1.5">
-                  Supabase Anon Key
-                </label>
-                <input
-                  type="password"
-                  value={settings.supabaseAnonKey}
-                  onChange={(e) =>
-                    updateSetting('supabaseAnonKey', e.target.value)
-                  }
-                  placeholder="eyJ..."
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:border-indigo-500"
-                />
+                <div className="flex gap-2">
+                  <input
+                    type={showKey ? 'text' : 'password'}
+                    value={settings.openaiApiKey}
+                    onChange={(e) =>
+                      updateSetting('openaiApiKey', e.target.value)
+                    }
+                    placeholder="sk-..."
+                    className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-md text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    onClick={() => setShowKey(!showKey)}
+                    className="px-3 py-2 text-xs text-gray-400 hover:text-gray-200 border border-gray-700 rounded-md hover:bg-gray-800 transition-colors"
+                  >
+                    {showKey ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-600 mt-1.5">
+                  Powers the Command tab. Uses gpt-4o-mini. Stored locally in Chrome sync storage.
+                </p>
               </div>
             </div>
           </section>

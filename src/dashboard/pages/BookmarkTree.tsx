@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useRef } from 'react'
 import { useBookmarkStore } from '../../shared/store'
 import { getBookmarkTree, countBookmarks } from '../../shared/chromeApi'
 import type { BookmarkWithMetadata } from '../../shared/types'
@@ -23,6 +23,11 @@ export function BookmarkTree() {
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
 
+  // Drag-and-drop reorder state
+  const dragNodeRef = useRef<BookmarkWithMetadata | null>(null)
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const [dragPosition, setDragPosition] = useState<'above' | 'below' | null>(null)
+
   const loadBookmarks = useCallback(async () => {
     setLoading(true)
     try {
@@ -37,6 +42,51 @@ export function BookmarkTree() {
       setLoading(false)
     }
   }, [setBookmarkTree])
+
+  const handleDragStart = useCallback((e: React.DragEvent, node: BookmarkWithMetadata) => {
+    dragNodeRef.current = node
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', node.id)
+    const el = e.currentTarget as HTMLElement
+    el.style.opacity = '0.5'
+    requestAnimationFrame(() => { el.style.opacity = '' })
+  }, [])
+
+  const handleDragOver = useCallback((e: React.DragEvent, targetNode: BookmarkWithMetadata) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (!dragNodeRef.current || dragNodeRef.current.id === targetNode.id) return
+    if (dragNodeRef.current.parentId !== targetNode.parentId) return
+
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const midY = rect.top + rect.height / 2
+    setDragOverId(targetNode.id)
+    setDragPosition(e.clientY < midY ? 'above' : 'below')
+  }, [])
+
+  const handleDrop = useCallback(async (e: React.DragEvent, targetNode: BookmarkWithMetadata) => {
+    e.preventDefault()
+    const dragNode = dragNodeRef.current
+    if (!dragNode || dragNode.id === targetNode.id) return
+    if (dragNode.parentId !== targetNode.parentId) return
+
+    const targetIndex = targetNode.index ?? 0
+    const newIndex = dragPosition === 'below' ? targetIndex + 1 : targetIndex
+
+    try {
+      await chrome.bookmarks.move(dragNode.id, {
+        parentId: dragNode.parentId,
+        index: newIndex,
+      })
+      loadBookmarks()
+    } catch (err) {
+      console.error('Reorder failed:', err)
+    } finally {
+      dragNodeRef.current = null
+      setDragOverId(null)
+      setDragPosition(null)
+    }
+  }, [dragPosition, loadBookmarks])
 
   useEffect(() => {
     void loadBookmarks()
@@ -114,7 +164,7 @@ export function BookmarkTree() {
             onKeyDown={async (e) => {
               if (e.key === 'Enter' && newFolderName.trim()) {
                 // Create in "Other Bookmarks" (id "2") by default
-                await chrome.bookmarks.create({ parentId: '2', title: newFolderName.trim() })
+                await chrome.bookmarks.create({ parentId: '1', title: newFolderName.trim() })
                 setCreatingFolder(false)
                 setNewFolderName('')
                 loadBookmarks()
@@ -140,6 +190,11 @@ export function BookmarkTree() {
             node={node}
             depth={0}
             onRefresh={loadBookmarks}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+            dragOverId={dragOverId}
+            dragPosition={dragPosition}
           />
         ))}
       </div>
