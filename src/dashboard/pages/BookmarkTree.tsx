@@ -115,6 +115,24 @@ function formatTreeActionPreview(action: AIAction, titleMap: Map<string, string>
   }
 }
 
+function filterTree(nodes: BookmarkWithMetadata[], query: string): BookmarkWithMetadata[] {
+  const q = query.toLowerCase()
+  const result: BookmarkWithMetadata[] = []
+  for (const node of nodes) {
+    if (node.url) {
+      if (node.title.toLowerCase().includes(q) || node.url.toLowerCase().includes(q)) {
+        result.push(node)
+      }
+    } else if (node.children) {
+      const filteredChildren = filterTree(node.children, query)
+      if (filteredChildren.length > 0 || node.title.toLowerCase().includes(q)) {
+        result.push({ ...node, children: filteredChildren.length > 0 ? filteredChildren : node.children })
+      }
+    }
+  }
+  return result
+}
+
 export function BookmarkTree() {
   const bookmarkTree = useBookmarkStore((s) => s.bookmarkTree)
   const setBookmarkTree = useBookmarkStore((s) => s.setBookmarkTree)
@@ -133,6 +151,8 @@ export function BookmarkTree() {
   const [aiExecuting, setAiExecuting] = useState(false)
   const [aiExecutionResult, setAiExecutionResult] = useState<{ success: number; failed: number; errors: string[] } | null>(null)
   const [moveSelectionNodes, setMoveSelectionNodes] = useState<BookmarkWithMetadata[] | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   // Drag-and-drop reorder state
   const dragNodeRef = useRef<BookmarkWithMetadata | null>(null)
@@ -144,6 +164,7 @@ export function BookmarkTree() {
 
   // The root nodes are inside tree[0].children (Bookmarks Bar, Other Bookmarks, Mobile Bookmarks)
   const rootChildren = bookmarkTree[0]?.children || []
+  const filteredRootChildren = searchQuery.trim() ? filterTree(rootChildren, searchQuery.trim()) : rootChildren
   const nodeTitleMap = buildNodeTitleMap(rootChildren)
   const allNodes = flattenAllNodes(rootChildren)
   const nodeMap = new Map(allNodes.map((node) => [node.id, node]))
@@ -575,6 +596,33 @@ export function BookmarkTree() {
             </button>
           </div>
         </div>
+        {/* Search */}
+        <div className="relative mt-3">
+          <svg
+            className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            type="text"
+            defaultValue=""
+            onChange={(e) => {
+              const value = e.target.value
+              clearTimeout(searchTimerRef.current)
+              searchTimerRef.current = setTimeout(() => setSearchQuery(value), 250)
+            }}
+            placeholder="Search bookmarks by title or URL..."
+            className="w-full pl-10 pr-4 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+          />
+          {searchQuery && (
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
+              {countBookmarks(filteredRootChildren as BookmarkWithMetadata[])} results
+            </span>
+          )}
+        </div>
       </div>
 
       {/* New folder inline input */}
@@ -610,27 +658,36 @@ export function BookmarkTree() {
 
       {/* Tree */}
       <div className="flex-1 overflow-y-auto px-4 py-3">
-        {rootChildren.map((node) => (
-          <BookmarkTreeNode
-            key={node.id}
-            node={node}
-            depth={0}
-            onRefresh={loadBookmarks}
-            onAskAI={handleOpenNodeAI}
-            selectedIds={selectedBookmarkIds}
-            onSelectNode={handleSelectNode}
-            onOpenSelectionAI={handleOpenSelectionAI}
-            onOpenMoveSelection={() => setMoveSelectionNodes(effectiveSelectedNodes)}
-            onDeleteSelection={handleDeleteSelection}
-            onClearSelection={clearSelected}
-            onDragStart={handleDragStart}
-            onDragEnd={clearDragState}
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
-            dragOverId={dragOverId}
-            dragPosition={dragPosition}
-          />
-        ))}
+        {filteredRootChildren.length === 0 && searchQuery.trim() ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <svg className="w-10 h-10 text-gray-700 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <p className="text-sm text-gray-500">No bookmarks match "<span className="text-gray-300">{searchQuery}</span>"</p>
+          </div>
+        ) : (
+          filteredRootChildren.map((node) => (
+            <BookmarkTreeNode
+              key={node.id}
+              node={node}
+              depth={0}
+              onRefresh={loadBookmarks}
+              onAskAI={handleOpenNodeAI}
+              selectedIds={selectedBookmarkIds}
+              onSelectNode={handleSelectNode}
+              onOpenSelectionAI={handleOpenSelectionAI}
+              onOpenMoveSelection={() => setMoveSelectionNodes(effectiveSelectedNodes)}
+              onDeleteSelection={handleDeleteSelection}
+              onClearSelection={clearSelected}
+              onDragStart={handleDragStart}
+              onDragEnd={clearDragState}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+              dragOverId={dragOverId}
+              dragPosition={dragPosition}
+            />
+          ))
+        )}
       </div>
 
       {moveSelectionNodes && (

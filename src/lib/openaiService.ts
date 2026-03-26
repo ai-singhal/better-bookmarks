@@ -51,13 +51,14 @@ function isSupportedOpenAIModel(model: string): boolean {
 // ─── Types ───
 
 export interface AIAction {
-  type: 'move' | 'create_folder' | 'reorder' | 'delete' | 'rename' | 'search_results' | 'create_snapshot'
+  type: 'move' | 'create_folder' | 'reorder' | 'delete' | 'rename' | 'search_results' | 'create_snapshot' | 'create_bookmark'
   bookmarkId?: string
   bookmarkIds?: string[]
   destinationFolderId?: string
   parentId?: string
   index?: number
   title?: string
+  url?: string
 }
 
 export interface AIResponse {
@@ -181,7 +182,8 @@ You can:
 5. **Delete** — Remove bookmarks or empty folders. Use "delete" actions.
 6. **Rename** — Rename bookmarks or folders. Use "rename" actions with new title.
 7. **Create Snapshots** — Save a rollback snapshot of the current bookmark tree. Use "create_snapshot" with an optional title.
-8. **Bulk operations** — You can return multiple actions at once.
+8. **Create Bookmarks** — Add a new bookmark. Use "create_bookmark" with parentId (folder), title, and url.
+9. **Bulk operations** — You can return multiple actions at once.
 
 ## Response Format
 You MUST respond with valid JSON only (no markdown, no code fences). The schema:
@@ -194,6 +196,7 @@ You MUST respond with valid JSON only (no markdown, no code fences). The schema:
     { "type": "delete", "bookmarkId": "id" },
     { "type": "rename", "bookmarkId": "id", "title": "New Title" },
     { "type": "create_snapshot", "title": "Before Purdue Reorg" },
+    { "type": "create_bookmark", "parentId": "folderId", "title": "Page Title", "url": "https://example.com" },
     { "type": "search_results", "bookmarkIds": ["id1", "id2"] }
   ],
   "searchResults": [
@@ -548,6 +551,28 @@ export async function executeActions(
         case 'create_snapshot': {
           const snapshot = await createBookmarkTreeSnapshot(action.title)
           onProgress?.(i + 1, actions.length, `Created snapshot "${snapshot.label}"`)
+          success++
+          break
+        }
+        case 'create_bookmark': {
+          const parentId = resolveId(action.parentId) || '1'
+          if (!bookmarkState.folderIds.has(parentId)) {
+            failed++
+            errors.push(`create_bookmark skipped: parent folder "${parentId}" does not exist`)
+            break
+          }
+          if (!action.url) {
+            failed++
+            errors.push(`create_bookmark skipped: no URL provided`)
+            break
+          }
+          await chrome.bookmarks.create({
+            parentId,
+            title: action.title || action.url,
+            url: action.url,
+          })
+          bookmarkState = await readBookmarkState()
+          onProgress?.(i + 1, actions.length, `Bookmarked "${action.title || action.url}"`)
           success++
           break
         }

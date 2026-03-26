@@ -18,14 +18,15 @@
 
 I built Better Bookmarks because I was tired of searching through my 500+ bookmarks to find one research paper I bookmarked 2 years ago. It was such a frustrating experience. I knew I had saved the link, but I couldn't remember why I saved it or where it was in my massive list of bookmarks.
 
-Better Bookmarks is a Chrome extension for people whose bookmark bar turned into a Public Storage rental unit. It's designed to help you quickly find the bookmarks you need, without having to manually search through hundreds of links.
+Better Bookmarks is a Chrome extension for people whose bookmark bar turned into a Public Storage rental unit. It's designed to help you quickly find and manage the bookmarks you need, without having to manually search through hundreds of links.
 
 The core experience is local-first. Your bookmark tree lives in Chrome, your extension metadata lives in Chrome storage, and the extension is useful before you configure any external service.
 
 ## What Makes It Different
 
-- A fast popup for recent bookmarks and quick lookup.
-- A full dashboard for browsing, reordering, batch-moving, and cleaning up bookmark folders.
+- A fast popup with two tabs: **Bookmarks** for recent bookmarks, search, and quick lookup, and **AI Assistant** for interacting with the current page using natural language.
+- An AI-powered popup that knows the page you're on — bookmark it, move it, summarize it, or ask where it should go, all without leaving the tab.
+- A full dashboard for browsing, reordering, batch-moving, and cleaning up bookmark folders, with built-in search to filter the tree by title or URL.
 - A "Discover" flow that feels more like triage than folder maintenance.
 - Reminder scheduling for links you actually want to come back to.
 - Per-bookmark notes, tags, and context stored alongside the bookmark in extension storage.
@@ -37,8 +38,8 @@ The core experience is local-first. Your bookmark tree lives in Chrome, your ext
 
 Today, the extension is centered around six pages:
 
-- `Bookmarks`: browse the full tree, create folders, drag items across folders, multi-select with `Cmd/Ctrl` or `Shift`, and right-click to batch move, delete, or ask AI what to do with the selection.
-- `AI Chat`: use an OpenAI key to search, rename, move, create folders, preview planned changes, and perform bulk bookmark actions from natural language.
+- `Bookmarks`: browse the full tree, search by title or URL, create folders, drag items across folders, multi-select with `Cmd/Ctrl` or `Shift`, and right-click to batch move, delete, or ask AI what to do with the selection.
+- `AI Chat`: use an OpenAI key to search, rename, move, create folders, create bookmarks, preview planned changes, and perform bulk bookmark actions from natural language.
 - `Organize`: analyze bookmarks against Chrome history to suggest new bookmarks, better folder placement, folder renames, reorder ideas, and cleanup work.
 - `Discover`: review bookmarks one by one, add notes and tags, rename in place, and use bookmark-specific AI while working through them like flashcards.
 - `Reminders`: manage bookmark follow-ups and recurring reminders.
@@ -58,6 +59,7 @@ Out of the box, the project already supports:
 - storing user settings, bookmark-tree snapshots, and the OpenAI API key in `chrome.storage.sync`
 - scheduling reminders with Chrome alarms and notifications
 - quick popup search with a fallback to Chrome's native bookmark search
+- real-time search and filtering in the dashboard bookmark tree
 - fetching bookmarked page content to improve local context and summaries
 
 ## AI Layer
@@ -97,8 +99,9 @@ If you are iterating locally, rebuild with `npm run build` after code changes an
 
 After loading the extension, Better Bookmarks opens the dashboard on first install. You can also open the popup from the Chrome toolbar at any time.
 
-- Use the popup when you want the fastest path to recent bookmarks and quick search.
-- Use `Bookmarks` to browse your full bookmark tree, drag items across folders, multi-select ranges, and run right-click actions or AI on a bookmark, folder, or selection.
+- Use the popup **Bookmarks** tab when you want the fastest path to recent bookmarks and search.
+- Use the popup **AI Assistant** tab to interact with the page you're viewing — bookmark it into the right folder, summarize it, find similar bookmarks, or ask anything in natural language.
+- Use `Bookmarks` to browse your full bookmark tree, search and filter by title or URL, drag items across folders, multi-select ranges, and run right-click actions or AI on a bookmark, folder, or selection.
 - Use `Discover` to review bookmarks one at a time, add notes or tags, rename them, and ask AI what to do with the current bookmark.
 - Use `Reminders` to schedule follow-ups for links you want to revisit later.
 - Use `Organize` to review suggestions based on your current bookmark tree and recent Chrome history.
